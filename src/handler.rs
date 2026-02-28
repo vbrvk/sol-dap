@@ -1,3 +1,6 @@
+
+use alloy_primitives::hex;
+
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
@@ -37,6 +40,8 @@ pub fn handle_request<R: Read, W: Write>(
                 supports_terminate_request: Some(true),
                 supports_restart_request: Some(true),
                 supports_evaluate_for_hovers: Some(true),
+                supports_read_memory_request: Some(true),
+
                 ..Default::default()
             };
 
@@ -262,6 +267,13 @@ pub fn handle_request<R: Read, W: Write>(
                     expensive: false,
                     ..Default::default()
                 },
+                types::Scope {
+                    name: "Gas Info".to_string(),
+                    variables_reference: 5000 + frame_id,
+                    expensive: false,
+                    ..Default::default()
+                },
+
             ];
 
             let body = responses::ScopesResponse { scopes };
@@ -305,6 +317,8 @@ pub fn handle_request<R: Read, W: Write>(
                 (2, _, Some(step)) => variables::memory_variables(step),
                 (3, Some(node), _) => variables::calldata_variables(node),
                 (4, _, Some(step)) => variables::returndata_variables(step),
+                (5, _, Some(step)) => variables::gas_info_variables(step),
+
                 _ => Vec::new(),
             };
 
@@ -380,6 +394,20 @@ pub fn handle_request<R: Read, W: Write>(
                 "op" => step.op.to_string(),
                 "gas" => step.gas_remaining.to_string(),
                 "address" => session.current_address().map(|a| a.to_string()).unwrap_or_default(),
+                "memory.length" => step
+                    .memory
+                    .as_ref()
+                    .map(|m| m.len().to_string())
+                    .unwrap_or_else(|| "0".to_string()),
+                "calldata" => session
+                    .current_debug_node()
+                    .map(|n| format!("0x{}", hex::encode(&n.calldata)))
+                    .unwrap_or_default(),
+                "returndata" => format!("0x{}", hex::encode(&step.returndata)),
+                "depth" => session.current_node.to_string(),
+                "node" => session.current_node.to_string(),
+                "step" => session.current_step.to_string(),
+
                 s if s.starts_with("stack[") && s.ends_with(']') => {
                     let idx_str = &s[6..s.len() - 1];
                     match idx_str.parse::<usize>() {

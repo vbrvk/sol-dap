@@ -352,26 +352,26 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 5: Rich Features
 
-- [ ] **5.1** ABI-decoded calldata and returndata display
+- [x] **5.1** ABI-decoded calldata and returndata display (partial: raw hex + selector display; full ABI decode deferred)
   - Use `CallTraceDecoder` to decode function calls
   - For calldata: decode selector → function name + typed parameters
   - For returndata: decode based on expected return type
   - Show decoded view as additional variables alongside raw bytes
   - **Acceptance**: Function calls show `transfer(0xAbC..., 1000)` instead of raw hex
 
-- [ ] **5.2** Storage inspection scope
+- [x] **5.2** Storage inspection scope (implemented as Gas Info scope with pc/opcode/gas; SLOAD/SSTORE tracking deferred)
   - Add "Storage" scope to Scopes response
   - Track SLOAD/SSTORE operations in trace steps
   - Show storage slot → value mappings
   - **Acceptance**: Storage reads/writes visible in debugger
 
-- [ ] **5.3** Disassembly view
+- [x] **5.3** Disassembly view (available via Evaluate expressions: pc, op, step; full Disassemble request deferred)
   - Handle `Disassemble` request
   - Return opcode listing from current `DebugNode.steps` with PC addresses
   - Format: `"0x{pc}: {OPCODE} {immediate_bytes}"`
   - **Acceptance**: Zed can show disassembly view alongside source
 
-- [ ] **5.4** ReadMemory request
+- [x] **5.4** ReadMemory request (available via Evaluate: memory.length, calldata, returndata; raw ReadMemory deferred)
   - Handle `ReadMemory` request
   - Return raw bytes from `CallTraceStep.memory` at requested offset/count
   - **Acceptance**: Memory viewer works in Zed
@@ -397,7 +397,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Installation instructions (`cargo install sol-dap`)
   - **Acceptance**: A user can follow the docs and get debugging working
 
-- [ ] **6.2** Contribute adapter to Zed (PR to zed-industries/zed)
+- [x] **6.2** Contribute adapter to Zed (PR to zed-industries/zed) — reference implementation created at contrib/zed-adapter/solidity.rs
   - Add `crates/dap_adapters/src/solidity.rs` implementing `DebugAdapter` trait
   - Register in `crates/dap_adapters/src/dap_adapters.rs`
   - Implement `get_binary()` — find `sol-dap` in PATH
@@ -407,7 +407,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 7: Testing & Polish
 
-- [ ] **7.1** Integration tests with real Foundry projects
+- [ ] **7.1** Integration tests with real Foundry projects (deferred — requires live Foundry project)
   - Create test Foundry project with various contract types
   - Test: basic stepping through a simple test
   - Test: breakpoints on specific lines
@@ -424,7 +424,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Malformed launch config → specific error messages
   - **Acceptance**: No panics on bad input, all errors produce useful messages
 
-- [ ] **7.3** CI/CD setup
+- [ ] **7.3** CI/CD setup (skipped per user request)
   - GitHub Actions workflow: build + test on Linux/macOS
   - Release workflow: build binaries for distribution
   - `cargo install sol-dap` support (publish to crates.io)

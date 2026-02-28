@@ -88,3 +88,36 @@ pub fn returndata_variables(step: &CallTraceStep) -> Vec<Variable> {
         })
         .collect()
 }
+
+pub fn gas_info_variables(step: &CallTraceStep) -> Vec<Variable> {
+    vec![
+        Variable {
+            name: "pc".to_string(),
+            value: format!("{}", step.pc),
+            type_field: Some("uint".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        },
+        Variable {
+            name: "opcode".to_string(),
+            value: step.op.to_string(),
+            type_field: Some("string".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        },
+        Variable {
+            name: "gas_remaining".to_string(),
+            value: format!("{}", step.gas_remaining),
+            type_field: Some("uint64".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        },
+        Variable {
+            name: "gas_cost".to_string(),
+            value: format!("{}", step.gas_cost),
+            type_field: Some("uint64".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        },
+    ]
+}
