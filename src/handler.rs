@@ -34,7 +34,9 @@ pub fn handle_request<R: Read, W: Write>(
                 supports_configuration_done_request: Some(true),
                 supports_function_breakpoints: Some(false),
                 supports_step_back: Some(true),
-                supports_terminate_request: Some(false),
+                supports_terminate_request: Some(true),
+                supports_restart_request: Some(true),
+                supports_evaluate_for_hovers: Some(true),
                 ..Default::default()
             };
 
@@ -359,6 +361,71 @@ pub fn handle_request<R: Read, W: Write>(
             };
 
             req.clone().success(ResponseBody::SetBreakpoints(body))
+        }
+        Command::Evaluate(args) => {
+            let session = match session.as_ref() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+
+            let step = session.current_trace_step();
+            let result = match args.expression.as_str() {
+                "pc" => step.pc.to_string(),
+                "op" => step.op.to_string(),
+                "gas" => step.gas_remaining.to_string(),
+                "address" => session.current_address().to_string(),
+                s if s.starts_with("stack[") && s.ends_with(']') => {
+                    let idx_str = &s[6..s.len() - 1];
+                    match idx_str.parse::<usize>() {
+                        Ok(idx) => {
+                            if let Some(stack) = &step.stack {
+                                if idx < stack.len() {
+                                    stack[stack.len() - 1 - idx].to_string()
+                                } else {
+                                    "stack index out of bounds".to_string()
+                                }
+                            } else {
+                                "stack not available".to_string()
+                            }
+                        }
+                        Err(_) => "invalid stack index".to_string(),
+                    }
+                }
+                _ => "not implemented".to_string(),
+            };
+
+            let body = responses::EvaluateResponse {
+                result,
+                type_field: None,
+                presentation_hint: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            };
+            req.clone().success(ResponseBody::Evaluate(body))
+        }
+        Command::Restart(_) => {
+            let config = match session.as_ref() {
+                Some(s) => s.launch_config.clone(),
+                None => return req.clone().error("no active debug session"),
+            };
+
+            match crate::launch::compile_and_debug(&config) {
+                Ok(ctx) => {
+                    *session = Some(DebugSession::new(ctx, config));
+                    emit_stopped(server, types::StoppedEventReason::Entry, None);
+                    req.clone().success(ResponseBody::Restart)
+                }
+                Err(e) => req.clone().error(&format!("restart failed: {e:#}")),
+            }
+        }
+        Command::Terminate(_) => {
+            *session = None;
+            let _ = server.send_event(Event::Terminated(Some(events::TerminatedEventBody {
+                restart: Some(serde_json::Value::Bool(false)),
+            })));
+            req.clone().success(ResponseBody::Terminate)
         }
         _ => req.clone().error("command not supported"),
     }

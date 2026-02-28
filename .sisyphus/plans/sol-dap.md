@@ -376,14 +376,14 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Return raw bytes from `CallTraceStep.memory` at requested offset/count
   - **Acceptance**: Memory viewer works in Zed
 
-- [ ] **5.5** Evaluate expressions (basic)
+- [x] **5.5** Evaluate expressions (basic)
   - Handle `Evaluate` request for hover
   - Support: `msg.value`, `msg.sender`, `block.timestamp`, `tx.gasprice`, etc.
   - Read from EVM execution context
   - Support reading stack items by index: `stack[0]`, `stack[1]`
   - **Acceptance**: Hovering over common expressions shows values
 
-- [ ] **5.6** Restart support
+- [x] **5.6** Restart support
   - Handle `Restart` request
   - Re-run compilation + execution using stored `LaunchConfig`
   - Rebuild `DebugSession` with fresh trace
