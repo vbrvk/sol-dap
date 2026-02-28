@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Foundry Solidity Debug Configuration",
+  "type": "object",
+  "properties": {
+    "adapter": {
+      "type": "string",
+      "enum": ["sol-dap"],
+      "description": "Debug adapter name"
+    },
+    "label": {
+      "type": "string",
+      "description": "Label of the debug configuration"
+    },
+    "request": {
+      "type": "string",
+      "enum": ["launch"],
+      "description": "Request type (only launch is supported)"
+    },
+    "project_root": {
+      "type": "string",
+      "description": "Path to the Foundry project root (use $ZED_WORKTREE_ROOT for current project)",
+      "default": "$ZED_WORKTREE_ROOT"
+    },
+    "test": {
+      "type": "string",
+      "description": "Test function name to debug (e.g. 'testTransfer')"
+    },
+    "contract": {
+      "type": "string",
+      "description": "Test contract name (e.g. 'TokenTest'). If omitted, matches any contract."
+    },
+    "script": {
+      "type": "string",
+      "description": "Script path to debug (e.g. 'script/Deploy.s.sol'). Use instead of test/contract."
+    },
+    "sig": {
+      "type": "string",
+      "description": "Script function signature (e.g. 'run()'). Required when using script.",
+      "default": "run()"
+    },
+    "profile": {
+      "type": "string",
+      "description": "Foundry profile name",
+      "default": "default"
+    },
+    "fork_url": {
+      "type": "string",
+      "description": "RPC URL for forked testing"
+    },
+    "fork_block_number": {
+      "type": "integer",
+      "description": "Block number to fork from"
+    },
+    "verbosity": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "Verbosity level (0-5, maps to forge -v flags)",
+      "default": 0
+    }
+  },
+  "required": ["adapter", "label", "request"],
+  "oneOf": [
+    {
+      "required": ["test"],
+      "properties": {
+        "test": { "type": "string" }
+      }
+    },
+    {
+      "required": ["script"],
+      "properties": {
+        "script": { "type": "string" }
+      }
+    }
+  ]
+}
