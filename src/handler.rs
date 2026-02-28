@@ -186,6 +186,10 @@ pub fn handle_request<R: Read, W: Write>(
                     ..Default::default()
                 };
 
+                tracing::debug!(
+                    "source_map: contract={}, pc={}, is_create={}, node_kind={:?}",
+                    contract_name, step.pc, node.kind.is_any_create(), node.kind
+                );
                 if let Some(loc) = source_map::step_to_source(
                     step,
                     contract_name,

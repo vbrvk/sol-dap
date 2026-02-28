@@ -44,27 +44,48 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     .wrap_err("forge test --debug failed")?;
 
     // Now build ContractSources from the compilation artifacts forge left behind.
+    // Change to project_root so Config::load_with_root resolves paths correctly.
+    // Without this, it walks up and finds the wrong root (e.g., sol-dap's root).
+    let original_dir = std::env::current_dir().ok();
+    std::env::set_current_dir(project_root).wrap_err("failed to chdir to project_root")?;
     let foundry_config = FoundryConfig::load_with_root(project_root).wrap_err_with(|| {
-        format!(
-            "failed to load foundry config from {}",
-            project_root.display()
-        )
+        format!("failed to load foundry config from {}", project_root.display())
     })?;
-
     let project = foundry_config.project().wrap_err_with(|| {
-        format!(
-            "failed to create foundry project for {}",
-            project_root.display()
-        )
+        format!("failed to create foundry project for {}", project_root.display())
     })?;
+    // Restore original directory
+    if let Some(dir) = original_dir {
+        let _ = std::env::set_current_dir(dir);
+    }
 
-    tracing::info!("starting compilation");
-    // TODO: ProjectCompiler::compile() hangs when stdout is redirected via dup2.
-    // For now, skip ContractSources — we have debug_arena and identified_contracts
-    // from the forge dump, which is enough for stepping. Source mapping (for
-    // showing Solidity source in the debugger) will need a different approach.
-    let sources = ContractSources::default();
-    tracing::info!("skipping compilation (source mapping not yet available)");
+    tracing::info!("building source maps from cached compilation artifacts");
+    // Use Project::compile() directly instead of ProjectCompiler::compile().
+    tracing::info!("project root: {}", project.root().display());
+    tracing::info!("sources dir: {}", project.paths.sources.display());
+    tracing::info!("artifacts dir: {}", project.paths.artifacts.display());
+    // Read all source files and pass them to the compiler explicitly.
+    // Project::compile() returns empty output when everything is cached.
+    // foundry_common's ProjectCompiler does the same but adds stdout printing
+    // and calls process::exit(0) on 'nothing to compile', which kills our DAP server.
+    // Disable caching AND force recompile with explicit sources.
+    let mut project = project;
+    project.cached = false;
+    let sources_input = project.paths.read_input_files().wrap_err("failed to read source files")?;
+    tracing::info!("read {} source files", sources_input.len());
+    let compiler = foundry_compilers::project::ProjectCompiler::with_sources(&project, sources_input)
+        .wrap_err("failed to create compiler")?;
+    let output = compiler.compile().wrap_err("foundry compilation failed")?;
+    let sources = ContractSources::from_project_output(&output, project_root, None)
+        .wrap_err("failed to build ContractSources from compilation output")?;
+    let artifact_count = output.artifact_ids().count();
+    tracing::info!("compilation produced {artifact_count} artifacts");
+    for (id, artifact) in output.artifact_ids().take(5) {
+        tracing::info!("  artifact: {} (file_id={:?})", id.name, artifact.id);
+    }
+    let sources = ContractSources::from_project_output(&output, project_root, None)
+        .wrap_err("failed to build ContractSources from compilation output")?;
+    tracing::info!("source maps ready ({} entries)", sources.entries().count());
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
 

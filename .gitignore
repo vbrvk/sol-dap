@@ -1,6 +1,5 @@
 /target
 
-
 # Foundry build artifacts in test fixtures
 tests/fixtures/sample-project/out/
-tests/fixtures/sample-project/cache/
+cache
