@@ -1,0 +1,42 @@
+[package]
+name = "sol-dap"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Debug Adapter Protocol server for Foundry Solidity debugger"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# DAP protocol layer
+dap = { git = "https://github.com/sztomi/dap-rs", package = "dap" }
+
+# Foundry crates (pinned to specific commit)
+foundry-debugger = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }
+foundry-evm-traces = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }
+foundry-evm-core = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }
+foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }
+foundry-common = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }
+
+# Foundry compilers (separate crate on crates.io)
+foundry-compilers = { version = "0.19.14", default-features = false, features = ["rustls", "svm-solc"] }
+
+# EVM
+revm = { version = "34.0.0", default-features = false }
+revm-inspectors = { version = "0.34.2", features = ["serde"] }
+
+# Alloy primitives (match foundry's version)
+alloy-primitives = { version = "1.5.2", features = ["getrandom", "rand", "map-fxhash", "map-foldhash"] }
+
+# Standard
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+eyre = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Foundry uses these patched crates - we need to match
+[patch.crates-io]
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
+solar-interface = { git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
+solar-ast = { git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
+solar-sema = { git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
