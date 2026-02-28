@@ -9,8 +9,34 @@ use crate::config::LaunchConfig;
 use crate::session::{DebugSession, StopReason};
 use crate::{source_map, variables};
 
+const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(data: &[u8]) -> String {
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        result.push(BASE64_CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(BASE64_CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(BASE64_CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(BASE64_CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
 fn emit_stopped<R: Read, W: Write>(
     server: &mut dap::server::Server<R, W>,
+    session: &Option<DebugSession>,
     reason: types::StoppedEventReason,
     description: Option<String>,
 ) {
@@ -23,6 +49,25 @@ fn emit_stopped<R: Read, W: Write>(
         all_threads_stopped: None,
         hit_breakpoint_ids: None,
     }));
+    emit_memory_event(server, session);
+}
+
+/// Emit a memory event indicating the EVM memory has been updated.
+/// The memory reference "evm-memory" is a virtual reference for the entire EVM memory space.
+fn emit_memory_event<R: Read, W: Write>(
+    server: &mut dap::server::Server<R, W>,
+    session: &Option<DebugSession>,
+) {
+    if let Some(session) = session.as_ref() {
+        if let Some(step) = session.current_trace_step() {
+            let mem_size = step.memory.as_ref().map(|m| m.len()).unwrap_or(0);
+            let _ = server.send_event(Event::Memory(events::MemoryEventBody {
+                memory_reference: "evm-memory".to_string(),
+                offset: 0,
+                count: mem_size as i64,
+            }));
+        }
+    }
 }
 
 pub fn handle_request<R: Read, W: Write>(
@@ -40,6 +85,7 @@ pub fn handle_request<R: Read, W: Write>(
                 supports_restart_request: Some(true),
                 supports_evaluate_for_hovers: Some(true),
                 supports_read_memory_request: Some(true),
+                supports_memory_event: Some(true),
 
                 ..Default::default()
             };
@@ -64,7 +110,7 @@ pub fn handle_request<R: Read, W: Write>(
                 Ok(ctx) => {
                     *session = Some(DebugSession::new(ctx, config));
 
-                    emit_stopped(server, types::StoppedEventReason::Entry, None);
+                    emit_stopped(server, session, types::StoppedEventReason::Entry, None);
 
                     req.clone().success(ResponseBody::Launch)
                 }
@@ -72,19 +118,19 @@ pub fn handle_request<R: Read, W: Write>(
             }
         }
         Command::Continue(_) => {
-            let session = match session.as_mut() {
-                Some(s) => s,
+            let stop_reason = match session.as_mut() {
+                Some(s) => s.continue_to_breakpoint(),
                 None => return req.clone().error("no active debug session"),
             };
 
-            let stop_reason = session.continue_to_breakpoint();
             match stop_reason {
                 StopReason::Breakpoint => {
-                    emit_stopped(server, types::StoppedEventReason::Breakpoint, None);
+                    emit_stopped(server, session, types::StoppedEventReason::Breakpoint, None);
                 }
                 StopReason::End => {
                     emit_stopped(
                         server,
+                        session,
                         types::StoppedEventReason::Step,
                         Some("end of trace".to_string()),
                     );
@@ -97,43 +143,39 @@ pub fn handle_request<R: Read, W: Write>(
             req.clone().success(ResponseBody::Continue(body))
         }
         Command::Next(_) => {
-            let session = match session.as_mut() {
-                Some(s) => s,
+            match session.as_mut() {
+                Some(s) => s.step_next(),
                 None => return req.clone().error("no active debug session"),
             };
-            session.step_next();
-            emit_stopped(server, types::StoppedEventReason::Step, None);
+            emit_stopped(server, session, types::StoppedEventReason::Step, None);
             req.clone().success(ResponseBody::Next)
         }
         Command::StepIn(_) => {
-            let session = match session.as_mut() {
-                Some(s) => s,
+            match session.as_mut() {
+                Some(s) => s.step_in(),
                 None => return req.clone().error("no active debug session"),
             };
-            session.step_in();
-            emit_stopped(server, types::StoppedEventReason::Step, None);
+            emit_stopped(server, session, types::StoppedEventReason::Step, None);
             req.clone().success(ResponseBody::StepIn)
         }
         Command::StepOut(_) => {
-            let session = match session.as_mut() {
-                Some(s) => s,
+            match session.as_mut() {
+                Some(s) => s.step_out(),
                 None => return req.clone().error("no active debug session"),
             };
-            session.step_out();
-            emit_stopped(server, types::StoppedEventReason::Step, None);
+            emit_stopped(server, session, types::StoppedEventReason::Step, None);
             req.clone().success(ResponseBody::StepOut)
         }
         Command::Pause(_) => {
-            emit_stopped(server, types::StoppedEventReason::Pause, None);
+            emit_stopped(server, session, types::StoppedEventReason::Pause, None);
             req.clone().success(ResponseBody::Pause)
         }
         Command::StepBack(_) => {
-            let session = match session.as_mut() {
-                Some(s) => s,
+            match session.as_mut() {
+                Some(s) => s.step_back_opcode(),
                 None => return req.clone().error("no active debug session"),
             };
-            session.step_back_opcode();
-            emit_stopped(server, types::StoppedEventReason::Step, None);
+            emit_stopped(server, session, types::StoppedEventReason::Step, None);
             req.clone().success(ResponseBody::StepBack)
         }
         Command::Threads(_) => {
@@ -464,7 +506,7 @@ pub fn handle_request<R: Read, W: Write>(
             match crate::launch::compile_and_debug(&config) {
                 Ok(ctx) => {
                     *session = Some(DebugSession::new(ctx, config));
-                    emit_stopped(server, types::StoppedEventReason::Entry, None);
+                    emit_stopped(server, session, types::StoppedEventReason::Entry, None);
                     req.clone().success(ResponseBody::Restart)
                 }
                 Err(e) => req.clone().error(&format!("restart failed: {e:#}")),
@@ -476,6 +518,58 @@ pub fn handle_request<R: Read, W: Write>(
                 restart: Some(serde_json::Value::Bool(false)),
             })));
             req.clone().success(ResponseBody::Terminate)
+        }
+        Command::ReadMemory(args) => {
+            let session = match session.as_ref() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+
+            let step = match session.current_trace_step() {
+                Some(s) => s,
+                None => {
+                    return req.clone().success(ResponseBody::ReadMemory(
+                        responses::ReadMemoryResponse {
+                            address: "0x0".to_string(),
+                            unreadable_bytes: None,
+                            data: None,
+                        },
+                    ));
+                }
+            };
+
+            let memory = step.memory.as_ref().map(|m| m.as_ref()).unwrap_or(&[]);
+            let offset = args.offset.unwrap_or(0).max(0) as usize;
+            let count = args.count.max(0) as usize;
+            let end = (offset + count).min(memory.len());
+            let slice = if offset < memory.len() {
+                &memory[offset..end]
+            } else {
+                &[]
+            };
+
+            let data = if slice.is_empty() {
+                None
+            } else {
+                // DAP spec: data is base64-encoded.
+                // Simple base64 encoding without pulling in another crate.
+                use alloy_primitives::hex;
+                // Use hex encoding as a fallback readable format.
+                // Zed's memory viewer can handle this.
+                Some(base64_encode(slice))
+            };
+
+            req.clone().success(ResponseBody::ReadMemory(
+                responses::ReadMemoryResponse {
+                    address: format!("0x{:x}", offset),
+                    unreadable_bytes: if end < offset + count {
+                        Some((offset + count - end) as i64)
+                    } else {
+                        None
+                    },
+                    data,
+                },
+            ))
         }
         _ => req.clone().error("command not supported"),
     }

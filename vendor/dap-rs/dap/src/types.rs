@@ -186,6 +186,9 @@ pub struct Capabilities {
   /// The debug adapter supports the `writeMemory` request.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub supports_write_memory_request: Option<bool>,
+  /// The debug adapter supports the `memory` event.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub supports_memory_event: Option<bool>,
   /// The debug adapter supports the `disassemble` request.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub supports_disassemble_request: Option<bool>,
