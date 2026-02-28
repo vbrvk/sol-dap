@@ -178,9 +178,16 @@ pub fn handle_request<R: Read, W: Write>(
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
 
+                // Frame name: "ContractName::OPCODE [pc]", e.g. "Counter::SSTORE [42]"
+                let frame_name = format!(
+                    "{}::{} [pc={}]",
+                    contract_name,
+                    step.op,
+                    step.pc
+                );
                 let mut frame = types::StackFrame {
                     id: i as i64,
-                    name: contract_name.to_string(),
+                    name: frame_name,
                     line: 0,
                     column: 0,
                     ..Default::default()
@@ -197,16 +204,18 @@ pub fn handle_request<R: Read, W: Write>(
                     node.kind.is_any_create(),
                     &session.launch_config.project_root,
                 ) {
+                    // Use path relative to project_root for display
+                    let display_path = loc.path
+                        .strip_prefix(&session.launch_config.project_root)
+                        .unwrap_or(&loc.path);
                     frame.source = Some(types::Source {
                         path: Some(loc.path.to_string_lossy().to_string()),
-                        name: loc
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string()),
+                        name: Some(display_path.to_string_lossy().to_string()),
                         ..Default::default()
                     });
                     frame.line = loc.line;
                     frame.column = loc.column;
+
                 }
 
                 frames.push(frame);
