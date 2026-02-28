@@ -643,6 +643,8 @@ pub struct Response {
   /// Sequence number of the corresponding request.
   #[serde(rename = "request_seq")]
   pub request_seq: i64,
+  /// The command requested.
+  pub command: String,
   /// Outcome of the request.
   /// If true, the request was successful and the `body` attribute may contain
   /// the result of the request.
@@ -674,12 +676,13 @@ mod test {
   #[test]
   fn test_responsemessage_is_flattened() {
     let a = Response {
-      request_seq: 1,
-      success: false,
-      message: Some(ResponseMessage::Error("test".to_string())),
-      body: None,
-      error: None,
-    };
+          command: String::new(),
+          request_seq: 1,
+          success: false,
+          message: Some(ResponseMessage::Error("test".to_string())),
+          body: None,
+          error: None,
+        };
     let val = serde_json::to_value(a).unwrap();
 
     assert!(val.get("message").unwrap().is_string());
@@ -687,23 +690,25 @@ mod test {
     assert!(!val.get("message").unwrap().is_object());
 
     let a = Response {
-      request_seq: 1,
-      success: false,
-      message: Some(ResponseMessage::Cancelled),
-      body: None,
-      error: None,
-    };
+          command: String::new(),
+          request_seq: 1,
+          success: false,
+          message: Some(ResponseMessage::Cancelled),
+          body: None,
+          error: None,
+        };
     let val = serde_json::to_value(a).unwrap();
     assert!(val.get("message").unwrap().is_string());
     assert!(val.get("message").unwrap().as_str().unwrap() == "cancelled");
 
     let a = Response {
-      request_seq: 1,
-      success: false,
-      message: Some(ResponseMessage::NotStopped),
-      body: None,
-      error: None,
-    };
+          command: String::new(),
+          request_seq: 1,
+          success: false,
+          message: Some(ResponseMessage::NotStopped),
+          body: None,
+          error: None,
+        };
     let val = serde_json::to_value(a).unwrap();
     assert!(val.get("message").unwrap().is_string());
     assert!(val.get("message").unwrap().as_str().unwrap() == "notStopped");
