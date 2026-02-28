@@ -635,38 +635,55 @@ pub enum ResponseBody {
 /// ResponseBody enum.
 ///
 /// Specification: [Response](https://microsoft.github.io/debug-adapter-protocol/specification#Base_Protocol_Response)
-#[derive(Serialize, Debug, Default, Clone)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "client", derive(Deserialize))]
+/// Note: We implement Serialize manually to avoid duplicate `command` fields.
+/// When `body` is Some, ResponseBody's serde tag provides `command`.
+/// When `body` is None (error/cancelled), we write `command` explicitly.
+#[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "client", derive(serde::Deserialize))]
 #[cfg_attr(feature = "integration_testing", derive(Dummy))]
 pub struct Response {
   /// Sequence number of the corresponding request.
-  #[serde(rename = "request_seq")]
   pub request_seq: i64,
   /// The command requested.
   pub command: String,
   /// Outcome of the request.
-  /// If true, the request was successful and the `body` attribute may contain
-  /// the result of the request.
-  /// If the value is false, the attribute `message` contains the error in short
-  /// form and the `body` may contain additional information (see
-  /// `ErrorResponse.body.error`).
   pub success: bool,
   /// Contains the raw error in short form if `success` is false.
-  /// This raw error might be interpreted by the client and is not shown in the
-  /// UI.
-  /// Some predefined values exist.
-  /// Values:
-  /// 'cancelled': request was cancelled.
-  /// etc.
-  #[serde(skip_serializing_if = "Option::is_none")]
   pub message: Option<ResponseMessage>,
-  /// Contains request result if success is true and error details if success is
-  /// false.
-  #[serde(flatten, skip_serializing_if = "Option::is_none")]
+  /// Contains request result if success is true and error details if success is false.
   pub body: Option<ResponseBody>,
   /// A structured error message.
   pub error: Option<Message>,
+}
+
+impl serde::Serialize for Response {
+  fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let mut map = serializer.serialize_map(None)?;
+    // Note: 'type' is added by Sendable enum's serde tag, not here.
+    map.serialize_entry("request_seq", &self.request_seq)?;
+    map.serialize_entry("success", &self.success)?;
+    if let Some(body) = &self.body {
+      let body_val = serde_json::to_value(body).map_err(serde::ser::Error::custom)?;
+      if let Some(cmd) = body_val.get("command") {
+        map.serialize_entry("command", cmd)?;
+      } else {
+        map.serialize_entry("command", &self.command)?;
+      }
+      if let Some(body_content) = body_val.get("body") {
+        map.serialize_entry("body", body_content)?;
+      }
+    } else {
+      map.serialize_entry("command", &self.command)?;
+    }
+    if let Some(msg) = &self.message {
+      map.serialize_entry("message", msg)?;
+    }
+    if let Some(err) = &self.error {
+      map.serialize_entry("error", err)?;
+    }
+    map.end()
+  }
 }
 
 #[cfg(test)]
