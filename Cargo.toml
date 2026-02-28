@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # DAP protocol layer
-dap = { git = "https://github.com/sztomi/dap-rs", package = "dap" }
+dap = { path = "vendor/dap-rs/dap" }
 
 # Foundry crates (pinned to specific commit)
 foundry-debugger = { git = "https://github.com/foundry-rs/foundry", rev = "6628501" }

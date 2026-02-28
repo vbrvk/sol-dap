@@ -1857,7 +1857,6 @@ dependencies = [
 [[package]]
 name = "dap"
 version = "0.4.1-alpha1"
-source = "git+https://github.com/sztomi/dap-rs#913a2a520416a2a81a1f09a7946f595d5ae3ee4a"
 dependencies = [
  "serde",
  "serde_json",

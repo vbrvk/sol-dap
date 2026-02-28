@@ -1,6 +1,7 @@
 {
-  "debugger": {
-    "log_dap_communications": true,
-    "format_dap_log_messages": true,
+  "dap": {
+    "sol-dap": {
+      "binary": "/Users/vladimir/projects/sol-dap/target/debug/sol-dap",
+    },
   },
 }
