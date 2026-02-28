@@ -1,10 +1,27 @@
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use dap::prelude::*;
 
 use crate::config::LaunchConfig;
-use crate::session::DebugSession;
+use crate::session::{DebugSession, StopReason};
 use crate::{source_map, variables};
+
+fn emit_stopped<R: Read, W: Write>(
+    server: &mut dap::server::Server<R, W>,
+    reason: types::StoppedEventReason,
+    description: Option<String>,
+) {
+    let _ = server.send_event(Event::Stopped(events::StoppedEventBody {
+        reason,
+        description,
+        thread_id: Some(1),
+        preserve_focus_hint: None,
+        text: None,
+        all_threads_stopped: None,
+        hit_breakpoint_ids: None,
+    }));
+}
 
 pub fn handle_request<R: Read, W: Write>(
     req: &dap::requests::Request,
@@ -16,7 +33,7 @@ pub fn handle_request<R: Read, W: Write>(
             let capabilities = types::Capabilities {
                 supports_configuration_done_request: Some(true),
                 supports_function_breakpoints: Some(false),
-                supports_step_back: Some(false),
+                supports_step_back: Some(true),
                 supports_terminate_request: Some(false),
                 ..Default::default()
             };
@@ -42,20 +59,77 @@ pub fn handle_request<R: Read, W: Write>(
                 Ok(ctx) => {
                     *session = Some(DebugSession::new(ctx, config));
 
-                    let _ = server.send_event(Event::Stopped(events::StoppedEventBody {
-                        reason: types::StoppedEventReason::Entry,
-                        description: None,
-                        thread_id: Some(1),
-                        preserve_focus_hint: None,
-                        text: None,
-                        all_threads_stopped: None,
-                        hit_breakpoint_ids: None,
-                    }));
+                    emit_stopped(server, types::StoppedEventReason::Entry, None);
 
                     req.clone().success(ResponseBody::Launch)
                 }
                 Err(e) => req.clone().error(&format!("launch failed: {e:#}")),
             }
+        }
+        Command::Continue(_) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+
+            let stop_reason = session.continue_to_breakpoint();
+            match stop_reason {
+                StopReason::Breakpoint => {
+                    emit_stopped(server, types::StoppedEventReason::Breakpoint, None);
+                }
+                StopReason::End => {
+                    emit_stopped(
+                        server,
+                        types::StoppedEventReason::Step,
+                        Some("end of trace".to_string()),
+                    );
+                }
+            }
+
+            let body = responses::ContinueResponse {
+                all_threads_continued: Some(true),
+            };
+            req.clone().success(ResponseBody::Continue(body))
+        }
+        Command::Next(_) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+            session.step_next();
+            emit_stopped(server, types::StoppedEventReason::Step, None);
+            req.clone().success(ResponseBody::Next)
+        }
+        Command::StepIn(_) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+            session.step_in();
+            emit_stopped(server, types::StoppedEventReason::Step, None);
+            req.clone().success(ResponseBody::StepIn)
+        }
+        Command::StepOut(_) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+            session.step_out();
+            emit_stopped(server, types::StoppedEventReason::Step, None);
+            req.clone().success(ResponseBody::StepOut)
+        }
+        Command::Pause(_) => {
+            emit_stopped(server, types::StoppedEventReason::Pause, None);
+            req.clone().success(ResponseBody::Pause)
+        }
+        Command::StepBack(_) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+            session.step_back_opcode();
+            emit_stopped(server, types::StoppedEventReason::Step, None);
+            req.clone().success(ResponseBody::StepBack)
         }
         Command::Threads => {
             let body = responses::ThreadsResponse {
@@ -247,9 +321,41 @@ pub fn handle_request<R: Read, W: Write>(
             let body = responses::VariablesResponse { variables: vars };
             req.clone().success(ResponseBody::Variables(body))
         }
-        Command::SetBreakpoints(_) => {
+        Command::SetBreakpoints(args) => {
+            let session = match session.as_mut() {
+                Some(s) => s,
+                None => return req.clone().error("no active debug session"),
+            };
+
+            let source_path = args.source.path.as_ref().map(PathBuf::from);
+            let Some(source_path) = source_path else {
+                let body = responses::SetBreakpointsResponse {
+                    breakpoints: Vec::new(),
+                };
+                return req.clone().success(ResponseBody::SetBreakpoints(body));
+            };
+
+            let requested_lines: Vec<i64> = args
+                .breakpoints
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|bp| bp.line)
+                .collect();
+
+            session
+                .source_breakpoints
+                .insert(source_path.clone(), requested_lines.clone());
+
             let body = responses::SetBreakpointsResponse {
-                breakpoints: Vec::new(),
+                breakpoints: requested_lines
+                    .into_iter()
+                    .map(|line| types::Breakpoint {
+                        verified: true,
+                        line: Some(line),
+                        ..Default::default()
+                    })
+                    .collect(),
             };
 
             req.clone().success(ResponseBody::SetBreakpoints(body))

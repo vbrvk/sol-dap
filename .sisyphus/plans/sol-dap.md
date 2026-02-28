@@ -308,7 +308,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 4: Navigation — Stepping & Breakpoints
 
-- [ ] **4.1** Implement stepping in `session.rs`
+- [x] **4.1** Implement stepping in `session.rs`
   - `step_opcode(&mut self)` — advance `current_step` by 1, handle node boundary
   - `step_back_opcode(&mut self)` — decrement `current_step` by 1, handle node boundary
   - `step_next(&mut self)` — advance until source-mapped line changes (skip opcodes on same line)
@@ -320,7 +320,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
     - `step_next` (source-level): like TUI's 's' key — find next JUMP/JUMPI boundary using `is_jump()` logic
   - **Acceptance**: All navigation methods work correctly on a sample trace
 
-- [ ] **4.2** Implement Continue in `session.rs`
+- [x] **4.2** Implement Continue in `session.rs`
   - `continue_to_breakpoint(&mut self) -> StopReason`
   - Walk forward through steps, for each step:
     1. Resolve source location via `step_to_source()`
@@ -329,7 +329,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - If no breakpoint hit → stop at end of trace, return `StopReason::End`
   - **Acceptance**: Continue runs to breakpoint or end of trace
 
-- [ ] **4.3** Implement SetBreakpoints in handler + session
+- [x] **4.3** Implement SetBreakpoints in handler + session
   - Receive `SetBreakpointsArguments { source, breakpoints }`
   - For each requested breakpoint line:
     1. Find all contracts that have source maps referencing this file
@@ -340,7 +340,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Return `Vec<dap::types::Breakpoint>` with verified status
   - **Acceptance**: Breakpoints set in Zed show verified/unverified correctly
 
-- [ ] **4.4** Wire up stepping commands in handler
+- [x] **4.4** Wire up stepping commands in handler
   - `Command::Continue` → `session.continue_to_breakpoint()` → emit `Stopped` event (reason: breakpoint or step)
   - `Command::Next` → `session.step_next()` → emit `Stopped` event (reason: step)
   - `Command::StepIn` → `session.step_in()` → emit `Stopped` event (reason: step)
