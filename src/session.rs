@@ -202,6 +202,7 @@ impl DebugSession {
             contract_name,
             &self.contracts_sources,
             node.kind.is_any_create(),
+            &self.launch_config.project_root,
         )
     }
 }

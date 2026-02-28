@@ -195,6 +195,7 @@ pub fn handle_request<R: Read, W: Write>(
                     contract_name,
                     &session.contracts_sources,
                     node.kind.is_any_create(),
+                    &session.launch_config.project_root,
                 ) {
                     frame.source = Some(types::Source {
                         path: Some(loc.path.to_string_lossy().to_string()),

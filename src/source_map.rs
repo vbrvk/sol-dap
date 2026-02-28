@@ -15,6 +15,7 @@ pub fn step_to_source(
     contract_name: &str,
     sources: &ContractSources,
     is_create: bool,
+    project_root: &std::path::Path,
 ) -> Option<SourceLocation> {
     tracing::debug!("find_source_mapping: contract={contract_name}, pc={}, is_create={is_create}", step.pc);
     let (source_element, source_data) =
@@ -28,7 +29,11 @@ pub fn step_to_source(
 
     tracing::debug!("source_map hit: path={}, line={line}, col={column}", source_data.path.display());
     Some(SourceLocation {
-        path: source_data.path.clone(),
+        path: if source_data.path.is_absolute() {
+            source_data.path.clone()
+        } else {
+            project_root.join(&source_data.path)
+        },
         line,
         column,
         length,
