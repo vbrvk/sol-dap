@@ -26,3 +26,9 @@
 ## 2026-02-28 Task 1.4: Session state + Launch wiring
 - In dap-rs (commit `913a2a52`), `events::StoppedEventBody` does **not** implement `Default`; construct it explicitly when sending `Event::Stopped(...)`.
 - `types::StoppedEventReason::Entry` exists and matches the DAP spec's `"entry"` reason.
+
+## 2026-02-28 Phase 3: State inspection (StackTrace/Scopes/Variables)
+- dap-rs types (`dap/src/types.rs` at `~/.cargo/git/checkouts/dap-rs-*/913a2a5`) derive `Default` for `types::StackFrame`, `types::Scope`, and `types::Variable`, so handlers can construct minimal responses via `..Default::default()`.
+- `types::Variable` uses `type_field: Option<String>` (serde rename = `"type"`) and requires `variables_reference: i64` (0 means no children).
+- `requests::StackTraceArguments` supports `start_frame` + `levels` for paging; `requests::VariablesArguments` supports `start` + `count`.
+- Foundry source maps use byte offsets; line/column conversion should operate on bytes, not Unicode scalar values.

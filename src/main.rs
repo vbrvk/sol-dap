@@ -6,6 +6,8 @@ mod config;
 mod handler;
 mod launch;
 mod session;
+mod source_map;
+mod variables;
 
 fn main() {
     tracing_subscriber::fmt()

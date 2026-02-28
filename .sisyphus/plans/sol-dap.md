@@ -254,11 +254,11 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 3: State Inspection — Stack, Variables, Source
 
-- [ ] **3.1** Implement Threads request
+- [x] **3.1** Implement Threads request
   - Return single thread: `Thread { id: 1, name: "EVM Execution" }`
   - **Acceptance**: Zed shows one thread in debugger panel
 
-- [ ] **3.2** Implement `source_map.rs` — PC to source location
+- [x] **3.2** Implement `source_map.rs` — PC to source location
   - `fn step_to_source(step: &CallTraceStep, address: &Address, identified_contracts: &AddressHashMap<String>, sources: &ContractSources) -> Option<SourceLocation>`
   - Look up contract name from address via `identified_contracts`
   - Call `sources.find_source_mapping(contract_name, step.pc as u32, is_create)` → get `(SourceElement, &SourceData)`
@@ -267,7 +267,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Handle the case where source mapping returns None (e.g., compiler-generated code) → return None
   - **Acceptance**: Given a CallTraceStep, produces correct file:line:column
 
-- [ ] **3.3** Implement StackTrace request
+- [x] **3.3** Implement StackTrace request
   - Walk `debug_arena[0..=current_node]` to build stack frames
   - For each `DebugNode` in the path, create a `dap::types::StackFrame`:
     - `id`: node index
@@ -278,7 +278,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Parent frames use their last step for source location
   - **Acceptance**: Zed shows call stack with correct Solidity file locations
 
-- [ ] **3.4** Implement Scopes request
+- [x] **3.4** Implement Scopes request
   - For a given frame_id (stack frame), return scopes:
     ```
     Scope { name: "Stack",      variables_reference: 1000 + frame_id }
@@ -289,7 +289,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Store scope → variable reference mapping in session
   - **Acceptance**: Zed shows expandable scope sections
 
-- [ ] **3.5** Implement `variables.rs` — EVM state as DAP Variables
+- [x] **3.5** Implement `variables.rs` — EVM state as DAP Variables
   - **Stack variables**: `CallTraceStep.stack` → named using `OpcodeParam::of(op)` from foundry-debugger's `op.rs`
     - Each stack item: `Variable { name: param_name_or_index, value: "0x{hex}", type: "uint256" }`
   - **Memory variables**: `CallTraceStep.memory` → chunked into 32-byte words
@@ -300,7 +300,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - **Returndata variables**: `CallTraceStep.returndata` → raw hex
   - **Acceptance**: Zed shows stack, memory, calldata with readable values
 
-- [ ] **3.6** Implement Variables request in handler
+- [x] **3.6** Implement Variables request in handler
   - Dispatch based on `variables_reference` ranges (1000s = stack, 2000s = memory, etc.)
   - Call appropriate function in `variables.rs`
   - Handle nested variable references for expandable items
