@@ -1,0 +1,10 @@
+[
+  {
+    "label": "Debug testIncrement",
+    "adapter": "sol-dap",
+    "request": "launch",
+    "project_root": "$ZED_WORKTREE_ROOT",
+    "test": "testIncrement",
+    "contract": "CounterTest",
+  },
+]
