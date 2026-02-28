@@ -2,12 +2,7 @@ use std::io::{BufReader, BufWriter};
 
 use dap::prelude::*;
 
-mod config;
-mod handler;
-mod launch;
-mod session;
-mod source_map;
-mod variables;
+use sol_dap::{handler, session};
 
 fn main() {
     tracing_subscriber::fmt()

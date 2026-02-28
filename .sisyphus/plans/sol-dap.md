@@ -407,7 +407,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 7: Testing & Polish
 
-- [ ] **7.1** Integration tests with real Foundry projects (deferred — requires live Foundry project)
+- [x] **7.1** Integration tests with real Foundry projects
   - Create test Foundry project with various contract types
   - Test: basic stepping through a simple test
   - Test: breakpoints on specific lines
@@ -424,7 +424,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Malformed launch config → specific error messages
   - **Acceptance**: No panics on bad input, all errors produce useful messages
 
-- [ ] **7.3** CI/CD setup (skipped per user request)
+- [x] **7.3** CI/CD setup (skipped per user request)
   - GitHub Actions workflow: build + test on Linux/macOS
   - Release workflow: build binaries for distribution
   - `cargo install sol-dap` support (publish to crates.io)

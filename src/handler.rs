@@ -1,4 +1,3 @@
-
 use alloy_primitives::hex;
 
 use std::io::{Read, Write};
@@ -273,7 +272,6 @@ pub fn handle_request<R: Read, W: Write>(
                     expensive: false,
                     ..Default::default()
                 },
-
             ];
 
             let body = responses::ScopesResponse { scopes };
@@ -383,17 +381,22 @@ pub fn handle_request<R: Read, W: Write>(
             };
 
             let Some(step) = session.current_trace_step() else {
-                return req.clone().success(ResponseBody::Evaluate(responses::EvaluateResponse {
-                    result: "not available".to_string(),
-                    ..Default::default()
-                }));
+                return req
+                    .clone()
+                    .success(ResponseBody::Evaluate(responses::EvaluateResponse {
+                        result: "not available".to_string(),
+                        ..Default::default()
+                    }));
             };
 
             let result = match args.expression.as_str() {
                 "pc" => step.pc.to_string(),
                 "op" => step.op.to_string(),
                 "gas" => step.gas_remaining.to_string(),
-                "address" => session.current_address().map(|a| a.to_string()).unwrap_or_default(),
+                "address" => session
+                    .current_address()
+                    .map(|a| a.to_string())
+                    .unwrap_or_default(),
                 "memory.length" => step
                     .memory
                     .as_ref()

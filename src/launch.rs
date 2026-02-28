@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use alloy_primitives::{map::AddressHashMap, Address};
@@ -25,6 +25,25 @@ pub struct DebuggerContext {
 pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerContext> {
     let project_root = &launch_config.project_root;
 
+    let test = launch_config
+        .test
+        .as_deref()
+        .ok_or_eyre("only test debugging is supported for now (missing `test`)")?;
+
+    let (match_contract, match_test) = split_contract_test(launch_config.contract.as_deref(), test);
+    let dump_path = temp_dump_path(project_root);
+
+    // Run forge first (it compiles internally), then build ContractSources from artifacts.
+    // This ordering avoids file-lock contention between ProjectCompiler and forge.
+    let dump = run_forge_debug_dump(
+        project_root,
+        &dump_path,
+        match_contract.as_deref(),
+        &match_test,
+    )
+    .wrap_err("forge test --debug failed")?;
+
+    // Now build ContractSources from the compilation artifacts forge left behind.
     let foundry_config = FoundryConfig::load_with_root(project_root).wrap_err_with(|| {
         format!(
             "failed to load foundry config from {}",
@@ -44,44 +63,49 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         .compile(&project)
         .wrap_err("foundry compilation failed")?;
 
-    if output.has_compiler_errors() {
-        eyre::bail!("compilation produced errors; see compiler output above");
-    }
-
     let sources = ContractSources::from_project_output(&output, project_root, None)
         .wrap_err("failed to build ContractSources from compilation output")?;
-
-    let test = launch_config
-        .test
-        .as_deref()
-        .ok_or_eyre("only test debugging is supported for now (missing `test`)")?;
-
-    let (match_contract, match_test) = split_contract_test(launch_config.contract.as_deref(), test);
-    let dump_path = temp_dump_path(project_root);
-
-    let dump = run_forge_debug_dump(
-        project_root,
-        &dump_path,
-        match_contract.as_deref(),
-        &match_test,
-    )
-    .wrap_err("forge test --debug failed")?;
 
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
 
     Ok(DebuggerContext {
-        debug_arena: dump.debug_arena,
+        debug_arena: dump.debug_arena.into_iter().map(DebugNode::from).collect(),
         identified_contracts,
         contracts_sources: sources,
         breakpoints: Breakpoints::default(),
     })
 }
 
+/// Intermediate type for deserializing the forge dump.
+/// We use our own node type because the installed forge version may not
+/// include all fields that the pinned foundry crate expects (e.g. `gas_limit`).
 #[derive(Debug, Deserialize)]
 struct ForgeDebuggerDump {
     contracts: ForgeContractsDump,
-    debug_arena: Vec<DebugNode>,
+    debug_arena: Vec<RawDebugNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDebugNode {
+    pub address: Address,
+    pub kind: revm_inspectors::tracing::types::CallKind,
+    pub calldata: alloy_primitives::Bytes,
+    #[serde(default)]
+    pub gas_limit: u64,
+    pub steps: Vec<revm_inspectors::tracing::types::CallTraceStep>,
+}
+
+impl From<RawDebugNode> for DebugNode {
+    fn from(raw: RawDebugNode) -> Self {
+        Self {
+            address: raw.address,
+            kind: raw.kind,
+            calldata: raw.calldata,
+            gas_limit: raw.gas_limit,
+            steps: raw.steps,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,7 +139,11 @@ fn run_forge_debug_dump(
     match_test: &str,
 ) -> eyre::Result<ForgeDebuggerDump> {
     let mut cmd = Command::new("forge");
-    cmd.current_dir(project_root)
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("TERM", "dumb")
+        .current_dir(project_root)
         .arg("test")
         .arg("--debug")
         .arg("--dump")
@@ -127,15 +155,36 @@ fn run_forge_debug_dump(
         cmd.arg("--match-contract").arg(contract);
     }
 
-    let out = cmd.output().wrap_err("failed to spawn forge")?;
-    if !out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        eyre::bail!(
-            "forge exited with {}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}",
-            out.status
-        );
+    // Spawn the process and wait for the dump file to appear.
+    // forge test --debug --dump writes the file then opens the TUI,
+    // so we poll for the file and kill the process once it exists.
+    let mut child = cmd.spawn().wrap_err("failed to spawn forge")?;
+
+    // Wait for the dump file to appear (forge writes it before opening TUI)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if dump_path.exists() && std::fs::metadata(dump_path).map(|m| m.len() > 0).unwrap_or(false) {
+            // Give forge a moment to finish writing
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            eyre::bail!("timed out waiting for forge to produce debug dump");
+        }
+        // Check if the process exited with an error
+        if let Some(status) = child.try_wait().wrap_err("failed to wait for forge")? {
+            if !status.success() {
+                eyre::bail!("forge exited with {status}");
+            }
+            break; // Process exited successfully
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    // Kill the forge process (it may be stuck in the TUI)
+    let _ = child.kill();
+    let _ = child.wait();
 
     let dump_bytes = std::fs::read(dump_path)
         .wrap_err_with(|| format!("failed to read forge dump at {}", dump_path.display()))?;

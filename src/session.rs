@@ -49,7 +49,8 @@ impl DebugSession {
     }
 
     pub fn current_trace_step(&self) -> Option<&CallTraceStep> {
-        self.current_debug_node().and_then(|node| node.steps.get(self.current_step))
+        self.current_debug_node()
+            .and_then(|node| node.steps.get(self.current_step))
     }
 
     pub fn current_address(&self) -> Option<&Address> {
@@ -67,7 +68,9 @@ impl DebugSession {
     }
 
     pub fn current_node_step_count(&self) -> usize {
-        self.current_debug_node().map(|n| n.steps.len()).unwrap_or(0)
+        self.current_debug_node()
+            .map(|n| n.steps.len())
+            .unwrap_or(0)
     }
 
     pub fn is_at_end(&self) -> bool {

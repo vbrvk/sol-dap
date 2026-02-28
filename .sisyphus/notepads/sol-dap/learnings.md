@@ -32,3 +32,7 @@
 - `types::Variable` uses `type_field: Option<String>` (serde rename = `"type"`) and requires `variables_reference: i64` (0 means no children).
 - `requests::StackTraceArguments` supports `start_frame` + `levels` for paging; `requests::VariablesArguments` supports `start` + `count`.
 - Foundry source maps use byte offsets; line/column conversion should operate on bytes, not Unicode scalar values.
+
+## 2026-02-28 Task: Integration test fixture + Rust integration tests
+- To make crate internals available to `tests/*.rs`, add `src/lib.rs` that re-exports modules; `src/main.rs` can then import via `use sol_dap::{handler, session};` without changing runtime logic.
+- A minimal Foundry fixture can avoid `forge-std` entirely by using Solidity's built-in `assert(...)` and a `.t.sol` file; this keeps the fixture self-contained (no `forge install` needed).
