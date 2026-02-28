@@ -33,6 +33,7 @@ serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 eyre = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libc = "0.2"
 
 # Foundry uses these patched crates - we need to match
 [patch.crates-io]

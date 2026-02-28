@@ -58,14 +58,13 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         )
     })?;
 
-    let compiler = ProjectCompiler::new();
-    let output = compiler
-        .compile(&project)
-        .wrap_err("foundry compilation failed")?;
-
-    let sources = ContractSources::from_project_output(&output, project_root, None)
-        .wrap_err("failed to build ContractSources from compilation output")?;
-
+    tracing::info!("starting compilation");
+    // TODO: ProjectCompiler::compile() hangs when stdout is redirected via dup2.
+    // For now, skip ContractSources — we have debug_arena and identified_contracts
+    // from the forge dump, which is enough for stepping. Source mapping (for
+    // showing Solidity source in the debugger) will need a different approach.
+    let sources = ContractSources::default();
+    tracing::info!("skipping compilation (source mapping not yet available)");
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
 
@@ -155,6 +154,8 @@ fn run_forge_debug_dump(
         cmd.arg("--match-contract").arg(contract);
     }
 
+    tracing::info!("spawning forge in {}", project_root.display());
+
     // Spawn the process and wait for the dump file to appear.
     // forge test --debug --dump writes the file then opens the TUI,
     // so we poll for the file and kill the process once it exists.
@@ -163,6 +164,7 @@ fn run_forge_debug_dump(
     // Wait for the dump file to appear (forge writes it before opening TUI)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
+        tracing::trace!("poll: dump_exists={}", dump_path.exists());
         if dump_path.exists() && std::fs::metadata(dump_path).map(|m| m.len() > 0).unwrap_or(false) {
             // Give forge a moment to finish writing
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -189,9 +191,11 @@ fn run_forge_debug_dump(
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    // Kill the forge process (it may be stuck in the TUI)
+    tracing::info!("killing forge process");
     let _ = child.kill();
+    tracing::info!("waiting for forge to exit");
     let _ = child.wait();
+    tracing::info!("forge exited, reading dump");
 
     let dump_bytes = std::fs::read(dump_path)
         .wrap_err_with(|| format!("failed to read forge dump at {}", dump_path.display()))?;

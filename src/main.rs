@@ -20,10 +20,13 @@ fn main() {
     loop {
         match server.poll_request() {
             Ok(Some(req)) => {
+                tracing::info!("received request: {:?}", std::mem::discriminant(&req.command));
                 let response = handler::handle_request(&req, &mut server, &mut session);
+                tracing::info!("sending response for seq={}", req.seq);
                 if let Err(e) = server.respond(response) {
                     tracing::error!("failed to send response: {e}");
                 }
+                tracing::info!("response sent for seq={}", req.seq);
             }
             Ok(None) => {
                 tracing::info!("client disconnected (EOF)");

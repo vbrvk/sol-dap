@@ -5979,6 +5979,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm-core",
  "foundry-evm-traces",
+ "libc",
  "revm",
  "revm-inspectors",
  "serde",
