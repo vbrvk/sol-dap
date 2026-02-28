@@ -20,13 +20,17 @@ fn main() {
     loop {
         match server.poll_request() {
             Ok(Some(req)) => {
-                tracing::info!("received request: {:?}", std::mem::discriminant(&req.command));
+                let is_initialize = matches!(&req.command, Command::Initialize(_));
                 let response = handler::handle_request(&req, &mut server, &mut session);
-                tracing::info!("sending response for seq={}", req.seq);
                 if let Err(e) = server.respond(response) {
                     tracing::error!("failed to send response: {e}");
                 }
-                tracing::info!("response sent for seq={}", req.seq);
+                // DAP spec: Initialized event must be sent AFTER the initialize response.
+                if is_initialize {
+                    if let Err(e) = server.send_event(Event::Initialized) {
+                        tracing::error!("failed to emit initialized event: {e:?}");
+                    }
+                }
             }
             Ok(None) => {
                 tracing::info!("client disconnected (EOF)");

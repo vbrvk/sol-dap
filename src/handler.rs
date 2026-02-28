@@ -44,9 +44,8 @@ pub fn handle_request<R: Read, W: Write>(
                 ..Default::default()
             };
 
-            if let Err(e) = server.send_event(Event::Initialized) {
-                tracing::error!("failed to emit initialized event: {e:?}");
-            }
+            // Note: Initialized event must be sent AFTER the response.
+            // This is handled in main.rs after server.respond().
 
             req.clone().success(ResponseBody::Initialize(capabilities))
         }
