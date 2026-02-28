@@ -129,24 +129,26 @@ impl DebugSession {
         }
     }
 
+    /// Step to the next meaningful source line.
+    /// Skips opcodes with no source mapping and stops when we land on a
+    /// different (file, line) than where we started.
     pub fn step_next(&mut self) {
-        let start = self
-            .current_source_location()
-            .map(|loc| (loc.path.clone(), loc.line));
+        // Record starting source location (ignoring unmapped positions).
+        let start = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
 
         loop {
             if self.is_at_end() {
                 break;
             }
             self.step_opcode();
-            let now = self
-                .current_source_location()
-                .map(|loc| (loc.path.clone(), loc.line));
 
+            let now = self.current_source_location();
             match (&start, &now) {
+                // Started unmapped, found a mapped line → stop.
                 (None, Some(_)) => break,
-                (Some(a), Some(b)) if a != b => break,
-                (Some(_), None) => break,
+                // Started mapped, landed on a DIFFERENT mapped line → stop.
+                (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => break,
+                // Same line or currently unmapped → keep going.
                 _ => {}
             }
         }
