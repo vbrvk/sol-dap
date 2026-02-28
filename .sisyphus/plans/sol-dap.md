@@ -391,7 +391,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
 
 ### Phase 6: Zed Integration
 
-- [ ] **6.1** Create Zed debug adapter configuration documentation
+- [x] **6.1** Create Zed debug adapter configuration documentation
   - Document how to configure sol-dap in Zed's settings
   - Example `.zed/debug.json` (or equivalent) configuration
   - Installation instructions (`cargo install sol-dap`)
@@ -417,7 +417,7 @@ server.send_event(event: Event) -> Result<(), ServerError>
   - Test: source mapping accuracy
   - **Acceptance**: All tests pass
 
-- [ ] **7.2** Error handling hardening
+- [x] **7.2** Error handling hardening
   - Compilation failures → useful error messages in DAP output events
   - Test not found → clear error
   - Source map gaps (compiler-generated code) → graceful handling

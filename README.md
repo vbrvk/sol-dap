@@ -1,0 +1,116 @@
+# sol-dap — Debug Adapter Protocol server for Foundry Solidity debugger
+
+sol-dap is a Debug Adapter Protocol (DAP) server that brings Foundry's powerful Solidity debugging capabilities to any IDE or editor that supports DAP, such as Zed, VS Code, or Neovim.
+
+## Features
+
+- **Post-mortem Debugging**: sol-dap runs the entire test or script first, captures the full execution trace, and then allows you to navigate it. This makes stepping instant and allows for stepping backwards.
+- **Stepping**: Step Over, Step In, Step Out, and Step Back.
+- **Breakpoints**: Set line breakpoints in Solidity source files.
+- **Stack Inspection**: View the EVM stack for each call frame.
+- **Memory Inspection**: View the EVM memory state.
+- **Calldata & Return Data**: Inspect input and output data for each call.
+- **Source Mapping**: Automatically maps EVM instructions back to Solidity source code.
+- **Evaluate Expressions**: Basic support for evaluating expressions like `pc`, `op`, `gas`, `address`, and `stack[i]`.
+- **Restart & Terminate**: Easily restart the debugging session or terminate it.
+
+## Prerequisites
+
+- **Rust**: 1.89 or later.
+- **Foundry**: `forge` must be installed and available in your `PATH`. sol-dap relies on `forge test --debug --dump` to generate execution traces.
+
+## Installation
+
+Install from crates.io:
+
+```bash
+cargo install sol-dap
+```
+
+Or install from source for development:
+
+```bash
+cargo install --path .
+```
+
+## How It Works
+
+sol-dap implements a post-mortem debugging approach. When a debug session starts, it:
+1. Shells out to `forge` to run the specified test or script with the `--debug --dump` flags.
+2. Captures the resulting execution trace and source maps.
+3. Provides a DAP interface to navigate this recorded trace.
+
+Since the trace is pre-recorded, stepping is instantaneous and you can step backwards through time. However, you cannot modify state or perform "live" execution during the debug session.
+
+## Zed Editor Configuration
+
+To use sol-dap in the Zed editor, you can add a launch configuration to your `.zed/debug.json` file (or your global `settings.json` under `tasks`).
+
+### Example `.zed/debug.json`
+
+```json
+{
+  "label": "Debug Solidity Test",
+  "adapter": "sol-dap",
+  "configuration": {
+    "request": "launch",
+    "project_root": "${workspaceFolder}",
+    "test": "testTransfer",
+    "contract": "TokenTest"
+  }
+}
+```
+
+## Launch Configuration Options
+
+The following fields are supported in the `launch` request configuration:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `project_root` | string | Yes | Path to the Foundry project root. |
+| `test` | string | No* | Name of the test function to debug. |
+| `script` | string | No* | Path to the Solidity script to debug. |
+| `contract` | string | No | Name of the contract containing the test. |
+| `sig` | string | No | Function signature to call in a script. |
+| `profile` | string | No | Foundry profile to use for compilation and execution. |
+| `fork_url` | string | No | URL of the RPC endpoint for forking. |
+| `fork_block_number` | number | No | Block number to fork from. |
+| `verbosity` | number | No | Verbosity level for Foundry (0-5). |
+
+*\*Note: You must specify either `test` or `script`.*
+
+## Supported DAP Features
+
+| Feature | Supported | Notes |
+|---------|-----------|-------|
+| Initialize | Yes | Sets up capabilities. |
+| Launch | Yes | Compiles and runs Foundry to get the trace. |
+| Threads | Yes | Single "EVM Execution" thread. |
+| StackTrace | Yes | Shows the call stack. |
+| Scopes | Yes | Stack, Memory, Calldata, and Return Data. |
+| Variables | Yes | Inspects values within scopes. |
+| Continue | Yes | Runs until the next breakpoint or end of trace. |
+| Next | Yes | Step over. |
+| StepIn | Yes | Step into. |
+| StepOut | Yes | Step out. |
+| StepBack | Yes | Step back one opcode. |
+| Pause | Yes | Breaks execution. |
+| SetBreakpoints | Yes | Line-based source breakpoints. |
+| Evaluate | Yes | Supports `pc`, `op`, `gas`, `address`, `stack[i]`. |
+| Restart | Yes | Re-runs the Foundry command and restarts the session. |
+| Terminate | Yes | Ends the session. |
+| Disconnect | Yes | Cleans up the session. |
+
+## Architecture
+
+- `src/main.rs`: Entry point, handles the DAP server loop.
+- `src/handler.rs`: Dispatches DAP requests to the appropriate session methods.
+- `src/session.rs`: Manages the state of a debugging session, including the execution trace.
+- `src/launch.rs`: Handles shelling out to `forge` and parsing the output.
+- `src/config.rs`: Defines the launch configuration schema.
+- `src/source_map.rs`: Logic for mapping EVM instructions to Solidity source locations.
+- `src/variables.rs`: Logic for extracting variables from EVM state (stack, memory, etc.).
+
+## License
+
+This project is licensed under either the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE) at your option.

@@ -44,21 +44,21 @@ impl DebugSession {
         }
     }
 
-    pub fn current_debug_node(&self) -> &DebugNode {
-        &self.debug_arena[self.current_node]
+    pub fn current_debug_node(&self) -> Option<&DebugNode> {
+        self.debug_arena.get(self.current_node)
     }
 
-    pub fn current_trace_step(&self) -> &CallTraceStep {
-        &self.current_debug_node().steps[self.current_step]
+    pub fn current_trace_step(&self) -> Option<&CallTraceStep> {
+        self.current_debug_node().and_then(|node| node.steps.get(self.current_step))
     }
 
-    pub fn current_address(&self) -> &Address {
-        &self.current_debug_node().address
+    pub fn current_address(&self) -> Option<&Address> {
+        self.current_debug_node().map(|node| &node.address)
     }
 
     pub fn current_contract_name(&self) -> Option<&str> {
-        self.identified_contracts
-            .get(self.current_address())
+        self.current_address()
+            .and_then(|addr| self.identified_contracts.get(addr))
             .map(|s| s.as_str())
     }
 
@@ -67,12 +67,15 @@ impl DebugSession {
     }
 
     pub fn current_node_step_count(&self) -> usize {
-        self.current_debug_node().steps.len()
+        self.current_debug_node().map(|n| n.steps.len()).unwrap_or(0)
     }
 
     pub fn is_at_end(&self) -> bool {
+        if self.debug_arena.is_empty() {
+            return true;
+        }
         self.current_node >= self.debug_arena.len() - 1
-            && self.current_step >= self.current_node_step_count() - 1
+            && self.current_step >= self.current_node_step_count().saturating_sub(1)
     }
 
     pub fn step_opcode(&mut self) {
@@ -188,10 +191,11 @@ impl DebugSession {
     }
 
     pub fn current_source_location(&self) -> Option<SourceLocation> {
-        let node = self.current_debug_node();
+        let node = self.current_debug_node()?;
+        let step = self.current_trace_step()?;
         let contract_name = self.current_contract_name().unwrap_or("Unknown");
         source_map::step_to_source(
-            self.current_trace_step(),
+            step,
             contract_name,
             &self.contracts_sources,
             node.kind.is_any_create(),

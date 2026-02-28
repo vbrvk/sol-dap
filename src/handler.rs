@@ -368,12 +368,18 @@ pub fn handle_request<R: Read, W: Write>(
                 None => return req.clone().error("no active debug session"),
             };
 
-            let step = session.current_trace_step();
+            let Some(step) = session.current_trace_step() else {
+                return req.clone().success(ResponseBody::Evaluate(responses::EvaluateResponse {
+                    result: "not available".to_string(),
+                    ..Default::default()
+                }));
+            };
+
             let result = match args.expression.as_str() {
                 "pc" => step.pc.to_string(),
                 "op" => step.op.to_string(),
                 "gas" => step.gas_remaining.to_string(),
-                "address" => session.current_address().to_string(),
+                "address" => session.current_address().map(|a| a.to_string()).unwrap_or_default(),
                 s if s.starts_with("stack[") && s.ends_with(']') => {
                     let idx_str = &s[6..s.len() - 1];
                     match idx_str.parse::<usize>() {
