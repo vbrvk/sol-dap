@@ -21,6 +21,7 @@ fn main() {
         match server.poll_request() {
             Ok(Some(req)) => {
                 let is_initialize = matches!(&req.command, Command::Initialize(_));
+                let is_disconnect = matches!(&req.command, Command::Disconnect(_));
                 let response = handler::handle_request(&req, &mut server, &mut session);
                 if let Err(e) = server.respond(response) {
                     tracing::error!("failed to send response: {e}");
@@ -30,6 +31,11 @@ fn main() {
                     if let Err(e) = server.send_event(Event::Initialized) {
                         tracing::error!("failed to emit initialized event: {e:?}");
                     }
+                }
+                // Exit after disconnect so Zed can restart with a fresh process.
+                if is_disconnect {
+                    tracing::info!("disconnect received, exiting");
+                    break;
                 }
             }
             Ok(None) => {
