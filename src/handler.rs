@@ -49,7 +49,7 @@ pub fn handle_request<R: Read, W: Write>(
 
             req.clone().success(ResponseBody::Initialize(capabilities))
         }
-        Command::ConfigurationDone => req.clone().success(ResponseBody::ConfigurationDone),
+        Command::ConfigurationDone(_) => req.clone().success(ResponseBody::ConfigurationDone),
         Command::Disconnect(_) => req.clone().success(ResponseBody::Disconnect),
         Command::Launch(args) => {
             let config = match args.additional_data.as_ref() {
@@ -136,7 +136,7 @@ pub fn handle_request<R: Read, W: Write>(
             emit_stopped(server, types::StoppedEventReason::Step, None);
             req.clone().success(ResponseBody::StepBack)
         }
-        Command::Threads => {
+        Command::Threads(_) => {
             let body = responses::ThreadsResponse {
                 threads: vec![types::Thread {
                     id: 1,
