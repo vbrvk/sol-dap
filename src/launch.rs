@@ -177,6 +177,13 @@ fn run_forge_debug_dump(
             if !status.success() {
                 eyre::bail!("forge exited with {status}");
             }
+            if !dump_path.exists() {
+                eyre::bail!(
+                    "forge exited without creating debug dump. \
+                     Check that project_root points to a valid Foundry project \
+                     and the test/contract names are correct."
+                );
+            }
             break; // Process exited successfully
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
