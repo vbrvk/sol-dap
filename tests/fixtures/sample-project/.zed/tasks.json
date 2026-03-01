@@ -1,0 +1,13 @@
+[
+  {
+    "label": "forge test: $ZED_SYMBOL",
+    "command": "forge",
+    "args": ["test", "--match-test", "$ZED_SYMBOL", "-vvv"],
+    "tags": ["foundry-test"]
+  },
+  {
+    "label": "forge test all",
+    "command": "forge",
+    "args": ["test", "-vvv"]
+  }
+]
