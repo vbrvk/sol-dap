@@ -94,20 +94,6 @@ pub fn returndata_variables(step: &CallTraceStep) -> Vec<Variable> {
 pub fn gas_info_variables(step: &CallTraceStep) -> Vec<Variable> {
     vec![
         Variable {
-            name: "pc".to_string(),
-            value: format!("{}", step.pc),
-            type_field: Some("uint".to_string()),
-            variables_reference: 0,
-            ..Default::default()
-        },
-        Variable {
-            name: "opcode".to_string(),
-            value: step.op.to_string(),
-            type_field: Some("string".to_string()),
-            variables_reference: 0,
-            ..Default::default()
-        },
-        Variable {
             name: "gas_remaining".to_string(),
             value: format!("{}", step.gas_remaining),
             type_field: Some("uint64".to_string()),
@@ -193,14 +179,34 @@ pub fn storage_variables(
     vars
 }
 
-/// Build context variables for a call frame — only things NOT already in the frame name.
+/// Build context variables for a call frame.
 pub fn context_variables(
     node: &DebugNode,
     node_index: usize,
     debug_arena: &[DebugNode],
+    step: Option<&CallTraceStep>,
 ) -> Vec<Variable> {
     let mut vars = Vec::new();
 
+    // EVM execution point
+    if let Some(step) = step {
+        vars.push(Variable {
+            name: "pc".to_string(),
+            value: format!("{}", step.pc),
+            type_field: Some("uint".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+        vars.push(Variable {
+            name: "opcode".to_string(),
+            value: step.op.to_string(),
+            type_field: Some("string".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+    }
+
+    // Addresses
     vars.push(Variable {
         name: "this".to_string(),
         value: format!("0x{:x}", node.address),

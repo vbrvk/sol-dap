@@ -643,8 +643,8 @@ pub fn handle_request<R: Read, W: Write>(
                         Vec::new()
                     }
                 }
-                (7, Some(node), _) => {
-                    variables::context_variables(node, frame_idx, &session.debug_arena)
+                (7, Some(node), step) => {
+                    variables::context_variables(node, frame_idx, &session.debug_arena, step)
                 }
                 _ => Vec::new(),
             };
