@@ -69,36 +69,17 @@ fn evaluate_expression(
             }
         }
 
+        // === Mapping lookups: _balances[addr], _allowances[from][spender] ===
+        _ if expr.contains('[') && expr.contains(']') => {
+            eval_mapping_or_storage(expr, step, session)
+        }
+
         // === Storage variables (by Solidity name) ===
-        // e.g. typing "number" or "counter" in the console
         _ if is_storage_variable(expr, session) => {
             eval_storage_variable(expr, session)
         }
 
-        // === stack[N] ===
-        _ if expr.starts_with("stack[") && expr.ends_with(']') => {
-            let idx_str = &expr[6..expr.len() - 1];
-            match idx_str.parse::<usize>() {
-                Ok(idx) => {
-                    if let Some(stack) = &step.stack {
-                        if idx < stack.len() {
-                            format!("0x{:x}", stack[stack.len() - 1 - idx])
-                        } else {
-                            format!("stack index {idx} out of bounds (stack has {} items)", stack.len())
-                        }
-                    } else {
-                        "stack not available".to_string()
-                    }
-                }
-                Err(_) => "invalid stack index".to_string(),
-            }
-        }
-
-        // === memory[offset] or memory[offset:length] ===
-        _ if expr.starts_with("memory[") && expr.ends_with(']') => {
-            let inner = &expr[7..expr.len() - 1];
-            eval_memory_slice(inner, step)
-        }
+        // stack[N] and memory[N] are handled by eval_mapping_or_storage above
 
         // === Help ===
         "help" | "?" => {
@@ -108,7 +89,9 @@ fn evaluate_expression(
               stack, stack[N]\n\
               memory, memory[offset], memory[offset:length]\n\
               calldata, msg.data, returndata\n\
-              <variable_name> (storage variables, e.g. 'number', 'counter')\n\
+              <variable_name> (storage variables, e.g. 'number')\n\
+              <mapping>[<key>] (e.g. '_balances[msg.sender]', '_allowances[from][spender]')\n\
+              keys can be: hex (0x...), decimal, this, msg.sender, calldata param names\n\
               help, ?"
             .to_string()
         }
@@ -191,6 +174,223 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
     };
 
     format!("{name} ({type_label}) = {formatted}")
+}
+
+/// Evaluate mapping lookups like `_balances[0xaddr]` or `_balances[from]`.
+/// Also handles nested mappings like `_allowances[from][spender]`.
+/// Falls back to stack[N] evaluation if the name isn't a storage mapping.
+fn eval_mapping_or_storage(
+    expr: &str,
+    step: &revm_inspectors::tracing::types::CallTraceStep,
+    session: &DebugSession,
+) -> String {
+    use alloy_primitives::U256;
+    use std::collections::HashMap;
+
+    // Parse name[key] or name[key1][key2]
+    let bracket_pos = match expr.find('[') {
+        Some(p) => p,
+        None => return format!("invalid expression: {expr}"),
+    };
+    let var_name = &expr[..bracket_pos];
+
+    // Check if it's a known storage mapping
+    let mut mapping_slot: Option<U256> = None;
+    let mut value_type: Option<String> = None;
+    for layout in session.storage_layouts.values() {
+        for entry in &layout.storage {
+            if entry.label == var_name {
+                let encoding = layout.types.get(&entry.type_key)
+                    .and_then(|t| t.encoding.as_deref()).unwrap_or("");
+                if encoding == "mapping" {
+                    mapping_slot = Some(entry.slot.parse().unwrap_or_default());
+                    // Get the value type of the mapping
+                    let vtype = layout.types.get(&entry.type_key)
+                        .and_then(|t| t.value_type.as_deref());
+                    if let Some(vt) = vtype {
+                        let label = layout.types.get(vt).map(|t| t.label.clone());
+                        value_type = label;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    let Some(base_slot) = mapping_slot else {
+        // Not a mapping — fall back to stack[N] if it looks like that
+        if var_name == "stack" {
+            return eval_stack_index(&expr[6..expr.len()-1], step);
+        } else if var_name == "memory" {
+            return eval_memory_slice(&expr[7..expr.len()-1], step);
+        }
+        return format!("'{var_name}' is not a storage mapping");
+    };
+
+    // Parse all [key] segments
+    let mut keys: Vec<&str> = Vec::new();
+    let mut rest = &expr[bracket_pos..];
+    while rest.starts_with('[') {
+        let end = match rest.find(']') {
+            Some(p) => p,
+            None => return format!("unclosed bracket in: {expr}"),
+        };
+        keys.push(&rest[1..end]);
+        rest = &rest[end+1..];
+    }
+
+    if keys.is_empty() {
+        return format!("no key provided for mapping {var_name}");
+    }
+
+    // Resolve keys to U256 values
+    let resolved_keys: Vec<U256> = keys.iter().map(|key| {
+        resolve_value(key.trim(), step, session)
+    }).collect();
+
+    // Compute the storage slot: keccak256(abi.encode(key, slot))
+    // For nested mappings: keccak256(abi.encode(key2, keccak256(abi.encode(key1, slot))))
+    let mut current_slot = base_slot;
+    for key in &resolved_keys {
+        let mut data = [0u8; 64];
+        key.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[i] = b);
+        current_slot.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[32 + i] = b);
+        current_slot = U256::from_be_bytes(alloy_primitives::keccak256(&data).0);
+    }
+
+    // Look up the computed slot in storage
+    let current_address = session.current_address().cloned();
+    let mut storage: HashMap<U256, U256> = HashMap::new();
+    for (ni, node) in session.debug_arena.iter().enumerate() {
+        if current_address.as_ref() != Some(&node.address) {
+            if ni > session.current_node { break; }
+            continue;
+        }
+        let max_step = if ni == session.current_node {
+            session.current_step
+        } else if ni < session.current_node {
+            node.steps.len()
+        } else {
+            break;
+        };
+        for si in 0..max_step {
+            let s = &node.steps[si];
+            if s.op.get() == 0x55 {
+                if let Some(stack) = &s.stack {
+                    if stack.len() >= 2 {
+                        storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
+                    }
+                }
+            }
+        }
+    }
+
+    let value = storage.get(&current_slot).copied().unwrap_or_default();
+
+    // Format based on value type
+    let type_label = value_type.as_deref().unwrap_or("uint256");
+    let formatted = if type_label.starts_with("uint") {
+        format!("{value}")
+    } else if type_label.starts_with("address") || type_label.starts_with("contract") {
+        format!("0x{:040x}", value)
+    } else if type_label == "bool" {
+        if value.is_zero() { "false".to_string() } else { "true".to_string() }
+    } else {
+        format!("0x{:x}", value)
+    };
+
+    let keys_str = keys.join("][");
+    format!("{var_name}[{keys_str}] ({type_label}) = {formatted}")
+}
+
+/// Resolve a value expression to a U256.
+/// Handles: hex literals (0x...), decimal numbers, "this"/"address",
+/// "msg.sender"/"caller", and evaluating other storage variables.
+fn resolve_value(
+    expr: &str,
+    step: &revm_inspectors::tracing::types::CallTraceStep,
+    session: &DebugSession,
+) -> alloy_primitives::U256 {
+    use alloy_primitives::U256;
+
+    let expr = expr.trim();
+
+    // Hex literal
+    if let Some(hex_str) = expr.strip_prefix("0x") {
+        return U256::from_str_radix(hex_str, 16).unwrap_or_default();
+    }
+
+    // Decimal literal
+    if let Ok(n) = expr.parse::<u128>() {
+        return U256::from(n);
+    }
+
+    // this / address
+    if expr == "this" || expr == "address" {
+        return session.current_address()
+            .map(|a| U256::from_be_slice(a.as_slice()))
+            .unwrap_or_default();
+    }
+
+    // msg.sender / caller
+    if expr == "msg.sender" || expr == "caller" {
+        if session.current_node > 0 {
+            let caller_addr = &session.debug_arena[session.current_node - 1].address;
+            return U256::from_be_slice(caller_addr.as_slice());
+        }
+        return U256::ZERO;
+    }
+
+    // Stack reference: stack[N]
+    if let Some(idx_str) = expr.strip_prefix("stack[").and_then(|s| s.strip_suffix(']')) {
+        if let Ok(idx) = idx_str.parse::<usize>() {
+            if let Some(stack) = &step.stack {
+                if idx < stack.len() {
+                    return stack[stack.len() - 1 - idx];
+                }
+            }
+        }
+        return U256::ZERO;
+    }
+
+    // Try as a storage variable name (e.g., 'from' if it's a named param in calldata)
+    // Actually, local variable names on the stack aren't reliably mapped.
+    // But we can try calldata params: look for the name in function_params.
+    if let Some(node) = session.current_debug_node() {
+        if node.calldata.len() >= 4 {
+            let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+            if let Some(params) = session.function_params.get(&sel) {
+                for (i, (pname, _ptype)) in params.iter().enumerate() {
+                    if pname == expr {
+                        // Decode from calldata: params are at offset 4 + i*32
+                        let offset = 4 + i * 32;
+                        if offset + 32 <= node.calldata.len() {
+                            return U256::from_be_slice(&node.calldata[offset..offset + 32]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    U256::ZERO
+}
+
+fn eval_stack_index(idx_str: &str, step: &revm_inspectors::tracing::types::CallTraceStep) -> String {
+    match idx_str.parse::<usize>() {
+        Ok(idx) => {
+            if let Some(stack) = &step.stack {
+                if idx < stack.len() {
+                    format!("0x{:x}", stack[stack.len() - 1 - idx])
+                } else {
+                    format!("stack index {idx} out of bounds (stack has {} items)", stack.len())
+                }
+            } else {
+                "stack not available".to_string()
+            }
+        }
+        Err(_) => "invalid stack index".to_string(),
+    }
 }
 
 /// Evaluate memory[offset] or memory[offset:length]

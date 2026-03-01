@@ -40,6 +40,12 @@ pub struct StorageType {
     /// "inplace", "mapping", "bytes", "dynamic_array"
     #[serde(default)]
     pub encoding: Option<String>,
+    /// For mappings: the value type key (e.g. "t_uint256")
+    #[serde(default)]
+    pub value_type: Option<String>,
+    /// For mappings: the key type key (e.g. "t_address")
+    #[serde(default, rename = "key")]
+    pub key_type: Option<String>,
 }
 
 /// Maps a 4-byte function selector to its signature.
