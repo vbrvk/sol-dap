@@ -327,6 +327,12 @@ pub fn handle_request<R: Read, W: Write>(
                     expensive: false,
                     ..Default::default()
                 },
+                types::Scope {
+                    name: "Storage Variables".to_string(),
+                    variables_reference: 6000 + frame_id,
+                    expensive: false,
+                    ..Default::default()
+                },
             ];
 
             let body = responses::ScopesResponse { scopes };
@@ -371,7 +377,24 @@ pub fn handle_request<R: Read, W: Write>(
                 (3, Some(node), _) => variables::calldata_variables(node),
                 (4, _, Some(step)) => variables::returndata_variables(step),
                 (5, _, Some(step)) => variables::gas_info_variables(step),
-
+                (6, Some(node), _) => {
+                    let contract_name = session
+                        .identified_contracts
+                        .get(&node.address)
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    if let Some(layout) = session.storage_layouts.get(contract_name) {
+                        variables::storage_variables(
+                            &session.debug_arena,
+                            session.current_node,
+                            session.current_step,
+                            contract_name,
+                            layout,
+                        )
+                    } else {
+                        Vec::new()
+                    }
+                }
                 _ => Vec::new(),
             };
 

@@ -14,12 +14,39 @@ use foundry_evm_traces::debug::ContractSources;
 use serde::Deserialize;
 
 use crate::config::LaunchConfig;
+/// Parsed Solidity storage layout for a contract.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StorageLayout {
+    #[serde(default)]
+    pub storage: Vec<StorageEntry>,
+    #[serde(default)]
+    pub types: HashMap<String, StorageType>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StorageEntry {
+    pub label: String,
+    pub slot: String,
+    pub offset: u64,
+    #[serde(rename = "type")]
+    pub type_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StorageType {
+    pub label: String,
+    #[serde(rename = "numberOfBytes")]
+    pub number_of_bytes: String,
+}
+
 #[derive(Debug)]
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
     pub identified_contracts: AddressHashMap<String>,
     pub contracts_sources: ContractSources,
     pub breakpoints: Breakpoints,
+    /// Contract name → storage layout (for displaying Solidity variable values)
+    pub storage_layouts: HashMap<String, StorageLayout>,
 }
 
 pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerContext> {
@@ -86,6 +113,10 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     let sources = ContractSources::from_project_output(&output, project_root, None)
         .wrap_err("failed to build ContractSources from compilation output")?;
     tracing::info!("source maps ready ({} entries)", sources.entries().count());
+    // Load storage layouts from artifacts directory.
+    let storage_layouts = load_storage_layouts(&project.paths.artifacts)?;
+    tracing::info!("loaded storage layouts for {} contracts", storage_layouts.len());
+
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
 
@@ -94,6 +125,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         identified_contracts,
         contracts_sources: sources,
         breakpoints: Breakpoints::default(),
+        storage_layouts,
     })
 }
 
@@ -237,4 +269,56 @@ fn parse_identified_contracts(
         out.insert(address, name);
     }
     Ok(out)
+}
+
+/// Load storage layouts from all artifact JSON files in the `out/` directory.
+fn load_storage_layouts(artifacts_dir: &Path) -> eyre::Result<HashMap<String, StorageLayout>> {
+    let mut layouts = HashMap::new();
+    if !artifacts_dir.exists() {
+        return Ok(layouts);
+    }
+
+    // Walk out/<ContractFile>/<Contract>.json
+    for entry in std::fs::read_dir(artifacts_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(entry.path())? {
+            let file = file?;
+            let path = file.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let contract_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if contract_name.is_empty() {
+                continue;
+            }
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            // Parse just the storageLayout field from the artifact JSON.
+            #[derive(Deserialize)]
+            struct ArtifactPartial {
+                #[serde(default, rename = "storageLayout")]
+                storage_layout: Option<StorageLayout>,
+            }
+            let artifact: ArtifactPartial = match serde_json::from_slice(&data) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            if let Some(layout) = artifact.storage_layout {
+                if !layout.storage.is_empty() {
+                    tracing::debug!("  storage layout for {contract_name}: {} vars", layout.storage.len());
+                    layouts.insert(contract_name, layout);
+                }
+            }
+        }
+    }
+    Ok(layouts)
 }

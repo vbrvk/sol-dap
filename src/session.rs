@@ -9,7 +9,7 @@ use foundry_evm_traces::debug::ContractSources;
 use revm_inspectors::tracing::types::CallTraceStep;
 
 use crate::config::LaunchConfig;
-use crate::launch::DebuggerContext;
+use crate::launch::{DebuggerContext, StorageLayout};
 use crate::source_map::{self, SourceLocation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +28,8 @@ pub struct DebugSession {
     /// Source breakpoints: file → line numbers
     pub source_breakpoints: HashMap<PathBuf, Vec<i64>>,
     pub launch_config: LaunchConfig,
+    /// Contract name → storage layout for variable name resolution
+    pub storage_layouts: HashMap<String, StorageLayout>,
 }
 
 impl DebugSession {
@@ -37,6 +39,7 @@ impl DebugSession {
             identified_contracts: ctx.identified_contracts,
             contracts_sources: ctx.contracts_sources,
             breakpoints: ctx.breakpoints,
+            storage_layouts: ctx.storage_layouts,
             current_node: 0,
             current_step: 0,
             source_breakpoints: HashMap::new(),
