@@ -407,25 +407,7 @@ pub fn handle_request<R: Read, W: Write>(
                     }
                 }
                 (7, Some(node), _) => {
-                    let contract_name = session
-                        .identified_contracts
-                        .get(&node.address)
-                        .map(|s| s.as_str())
-                        .unwrap_or("Unknown");
-                    let fn_name = if node.calldata.len() >= 4 {
-                        let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
-                        session.method_identifiers.get(&sel).map(|s| s.as_str())
-                    } else {
-                        None
-                    };
-                    variables::context_variables(
-                        node,
-                        frame_idx,
-                        &session.debug_arena,
-                        contract_name,
-                        fn_name,
-                        &session.method_identifiers,
-                    )
+                    variables::context_variables(node, frame_idx, &session.debug_arena)
                 }
                 _ => Vec::new(),
             };
