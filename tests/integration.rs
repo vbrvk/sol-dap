@@ -483,6 +483,38 @@ fn test_vault_test_simple() {
     );
 }
 
+// ============ Console.log capture (requires forge) ============
+
+#[test]
+#[ignore]
+fn test_console_logs_captured() {
+    use sol_dap::config::LaunchConfig;
+    use sol_dap::launch;
+
+    let json = serde_json::json!({
+        "project_root": fixture_path().to_string_lossy().to_string(),
+        "test": "testDepositWithCallback",
+        "contract": "VaultTest"
+    });
+    let config = LaunchConfig::from_args(&json).unwrap();
+    let ctx = launch::compile_and_debug(&config).unwrap();
+
+    assert!(
+        !ctx.console_logs.is_empty(),
+        "should capture console.log output"
+    );
+    assert!(
+        ctx.console_logs.iter().any(|l| l.contains("Before deposit")),
+        "should have 'Before deposit' log, got: {:?}",
+        ctx.console_logs
+    );
+    assert!(
+        ctx.console_logs.iter().any(|l| l.contains("All assertions passed")),
+        "should have 'All assertions passed' log, got: {:?}",
+        ctx.console_logs
+    );
+}
+
 // ============ Local variables (requires forge) ============
 
 #[test]
