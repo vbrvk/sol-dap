@@ -232,20 +232,28 @@ fn test_continue_skips_current_breakpoint() {
     let test_file = fixture_path().join("test").join("Counter.t.sol");
     // line 15: counter.increment()
     // line 16: assert(counter.number() == 1)
-    session.source_breakpoints.insert(test_file.clone(), vec![15, 16]);
+    session
+        .source_breakpoints
+        .insert(test_file.clone(), vec![15, 16]);
 
     // First continue: should hit line 15
     let reason = session.continue_to_breakpoint();
     assert_eq!(reason, StopReason::Breakpoint);
-    let loc = session.current_source_location().expect("should have location");
+    let loc = session
+        .current_source_location()
+        .expect("should have location");
     assert_eq!(loc.line, 15, "first breakpoint should be line 15");
 
     // Second continue: should hit line 16, NOT line 15 again
     let reason = session.continue_to_breakpoint();
     assert_eq!(reason, StopReason::Breakpoint);
-    let loc = session.current_source_location().expect("should have location");
-    assert_eq!(loc.line, 16,
-        "second continue should skip to line 16, not re-hit line 15");
+    let loc = session
+        .current_source_location()
+        .expect("should have location");
+    assert_eq!(
+        loc.line, 16,
+        "second continue should skip to line 16, not re-hit line 15"
+    );
 }
 
 // ============ Source mapping (requires forge) ============
@@ -531,12 +539,16 @@ fn test_console_logs_captured() {
         "should capture console.log output"
     );
     assert!(
-        ctx.console_logs.iter().any(|l| l.contains("Before deposit")),
+        ctx.console_logs
+            .iter()
+            .any(|l| l.contains("Before deposit")),
         "should have 'Before deposit' log, got: {:?}",
         ctx.console_logs
     );
     assert!(
-        ctx.console_logs.iter().any(|l| l.contains("All assertions passed")),
+        ctx.console_logs
+            .iter()
+            .any(|l| l.contains("All assertions passed")),
         "should have 'All assertions passed' log, got: {:?}",
         ctx.console_logs
     );
@@ -552,9 +564,13 @@ fn test_storage_eval_cross_contract() {
     let mut session = create_session("testFeeCalculation", "VaultTest");
     session.continue_to_breakpoint();
 
-    let layout = session.storage_layouts.get("Vault")
+    let layout = session
+        .storage_layouts
+        .get("Vault")
         .expect("should have Vault storage layout");
-    let vault_addr = session.identified_contracts.iter()
+    let vault_addr = session
+        .identified_contracts
+        .iter()
         .find(|(_, name)| name.as_str() == "Vault")
         .map(|(addr, _)| *addr)
         .expect("should find Vault address");
@@ -566,10 +582,15 @@ fn test_storage_eval_cross_contract() {
         &vault_addr,
         layout,
     );
-    let total = vars.iter().find(|v| v.name == "totalDeposits")
+    let total = vars
+        .iter()
+        .find(|v| v.name == "totalDeposits")
         .expect("should find totalDeposits");
-    assert!(total.value != "0",
-        "totalDeposits should be non-zero after deposit, got: {}", total.value);
+    assert!(
+        total.value != "0",
+        "totalDeposits should be non-zero after deposit, got: {}",
+        total.value
+    );
 }
 
 #[test]
@@ -581,15 +602,23 @@ fn test_mapping_keccak256_slot_computation() {
     let key = U256::from_str_radix("7fa9385be102ac3eac297483dd6233d62b3e1496", 16).unwrap();
     let slot = U256::from(2);
     let mut data = [0u8; 64];
-    key.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[i] = b);
-    slot.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[32 + i] = b);
+    key.to_be_bytes::<32>()
+        .iter()
+        .enumerate()
+        .for_each(|(i, &b)| data[i] = b);
+    slot.to_be_bytes::<32>()
+        .iter()
+        .enumerate()
+        .for_each(|(i, &b)| data[32 + i] = b);
     let computed = U256::from_be_bytes(keccak256(&data).0);
 
     // This is the actual slot that forge writes to for deposits[0x7fa9...]
     // Verified from trace: SSTORE slot=0x6e10ff27cae71a13525bd61167857e5c982b4674c8e654900e4e9d5035811f78
     let expected = U256::from_str_radix(
-        "6e10ff27cae71a13525bd61167857e5c982b4674c8e654900e4e9d5035811f78", 16
-    ).unwrap();
+        "6e10ff27cae71a13525bd61167857e5c982b4674c8e654900e4e9d5035811f78",
+        16,
+    )
+    .unwrap();
     assert_eq!(computed, expected, "keccak256 mapping slot should match");
 }
 
@@ -613,8 +642,14 @@ fn test_local_variables_parsed() {
         if let Some(loc) = session.current_source_location() {
             let locals = variables::local_variables(&loc.path, loc.line, step);
             let names: Vec<&str> = locals.iter().map(|v| v.name.as_str()).collect();
-            assert!(names.contains(&"raw"), "should find local 'raw', got: {names:?}");
-            assert!(names.contains(&"normal"), "should find local 'normal', got: {names:?}");
+            assert!(
+                names.contains(&"raw"),
+                "should find local 'raw', got: {names:?}"
+            );
+            assert!(
+                names.contains(&"normal"),
+                "should find local 'normal', got: {names:?}"
+            );
 
             // 'raw' should have a value (declared before current line)
             let raw_var = locals.iter().find(|v| v.name == "raw").unwrap();
@@ -683,13 +718,396 @@ contract Test {\n\
     // Verify the file has the expected structure
     let source = std::fs::read_to_string(&source_path).unwrap();
     let lines: Vec<&str> = source.lines().collect();
-    assert!(lines[3].trim().contains("function doStuff"), "line 4 should have function");
-    assert!(lines[4].trim().starts_with("uint256 a"), "line 5 should have uint256 a");
-    assert!(lines[5].trim().starts_with("bool flag"), "line 6 should have bool flag");
-    assert!(lines[6].trim().starts_with("address sender"), "line 7 should have address sender");
-    assert!(lines[7].trim().starts_with("uint256 b"), "line 8 should have uint256 b");
+    assert!(
+        lines[3].trim().contains("function doStuff"),
+        "line 4 should have function"
+    );
+    assert!(
+        lines[4].trim().starts_with("uint256 a"),
+        "line 5 should have uint256 a"
+    );
+    assert!(
+        lines[5].trim().starts_with("bool flag"),
+        "line 6 should have bool flag"
+    );
+    assert!(
+        lines[6].trim().starts_with("address sender"),
+        "line 7 should have address sender"
+    );
+    assert!(
+        lines[7].trim().starts_with("uint256 b"),
+        "line 8 should have uint256 b"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ============ Expression evaluation (requires forge) ============
+
+#[test]
+#[ignore]
+fn test_eval_hex_literal() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let session = create_session("testIncrement", "CounterTest");
+    let step = session.current_trace_step().unwrap();
+    let result = evaluate_expression("0xff", step, &session);
+    assert_eq!(result, "255 (0xff)");
+}
+
+#[test]
+#[ignore]
+fn test_eval_arithmetic_add() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let session = create_session("testIncrement", "CounterTest");
+    let step = session.current_trace_step().unwrap();
+    assert_eq!(evaluate_expression("1 + 1", step, &session), "2 (0x2)");
+}
+
+#[test]
+#[ignore]
+fn test_eval_arithmetic_hex_sub() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let session = create_session("testIncrement", "CounterTest");
+    let step = session.current_trace_step().unwrap();
+    assert_eq!(
+        evaluate_expression("0xff - 32", step, &session),
+        "223 (0xdf)"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_eval_arithmetic_bitwise() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let session = create_session("testIncrement", "CounterTest");
+    let step = session.current_trace_step().unwrap();
+    assert_eq!(
+        evaluate_expression("0xff & 0x0f", step, &session),
+        "15 (0xf)"
+    );
+    assert_eq!(evaluate_expression("1 << 8", step, &session), "256 (0x100)");
+    assert_eq!(evaluate_expression("256 >> 4", step, &session), "16 (0x10)");
+    assert_eq!(
+        evaluate_expression("0xa0 | 0x0f", step, &session),
+        "175 (0xaf)"
+    );
+    assert_eq!(
+        evaluate_expression("0xff ^ 0x0f", step, &session),
+        "240 (0xf0)"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_eval_arithmetic_with_storage_var() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    // Step session to a point where 'number' storage var exists
+    let mut session = create_session("testIncrement", "CounterTest");
+    session.continue_to_breakpoint(); // run to end
+
+    let step = session.current_trace_step().unwrap();
+    // 'fee' is referenced in user's example but 'number' is what we have.
+    // After testIncrement, number == 1, so 'number + 1' should == 2
+    let result = evaluate_expression("0xff & number", step, &session);
+    // number is a storage var, so it should resolve via resolve_value
+    // The result should be 0xff & 1 = 1
+    assert_eq!(result, "1 (0x1)");
+}
+
+#[test]
+#[ignore]
+fn test_eval_stack_with_operator() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let mut session = create_session("testIncrement", "CounterTest");
+    // Step a bit so there's something on the stack
+    for _ in 0..5 {
+        session.step_opcode();
+    }
+    let step = session.current_trace_step().unwrap();
+
+    // stack[0] alone should work
+    let bare = evaluate_expression("stack[0]", step, &session);
+    assert!(
+        !bare.contains("invalid"),
+        "stack[0] should resolve, got: {bare}"
+    );
+
+    // stack[0] + 1 should evaluate as arithmetic, not fail with 'invalid stack index'
+    let result = evaluate_expression("stack[0] + 1", step, &session);
+    assert!(
+        !result.contains("invalid"),
+        "stack[0] + 1 should evaluate as arithmetic, got: {result}"
+    );
+    assert!(
+        !result.contains("unknown expression"),
+        "stack[0] + 1 should not be unknown, got: {result}"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_eval_mapping_with_operator() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    // Use a test that has a mapping (deposits in Vault)
+    let mut session = create_session("testFeeCalculation", "VaultTest");
+    session.continue_to_breakpoint(); // run to end so storage is populated
+    let step = session.current_trace_step().unwrap();
+
+    // deposits[msg.sender] alone should work
+    let bare = evaluate_expression("deposits[msg.sender]", step, &session);
+    assert!(
+        bare.contains("deposits"),
+        "mapping lookup should work, got: {bare}"
+    );
+
+    // deposits[msg.sender] + 10 should evaluate as arithmetic, returning a number
+    // When buggy, the bracket handler swallows the whole expression and returns
+    // the mapping value string instead of computing the arithmetic.
+    let result = evaluate_expression("deposits[msg.sender] + 10", step, &session);
+    // The result must be a numeric result (decimal + hex), not the mapping display format
+    assert!(
+        !result.contains("uint256"),
+        "should return arithmetic result, not mapping display format. got: {result}"
+    );
+    assert!(
+        result.contains("(0x"),
+        "should contain hex representation of arithmetic result. got: {result}"
+    );
+}
+
+// ============ Event variables (requires forge) ============
+
+#[test]
+#[ignore]
+fn test_event_variables_after_deposit() {
+    use sol_dap::variables;
+
+    // testDeposit emits events: OwnershipTransferred (in constructor),
+    // and Deposited (in deposit call).
+    let mut session = create_session("testDeposit", "VaultTest");
+    session.continue_to_breakpoint(); // run to end
+
+    let events = variables::event_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &session.event_signatures,
+        &session.identified_contracts,
+    );
+
+    // Should have at least one event
+    assert!(!events.is_empty(), "should have emitted events, got none");
+
+    // At least one event should be named (decoded from ABI)
+    let has_named = events
+        .iter()
+        .any(|v| v.value.contains("Deposited") || v.value.contains("OwnershipTransferred"));
+    assert!(
+        has_named,
+        "should have at least one decoded event name, got: {:?}",
+        events.iter().map(|v| &v.value).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore]
+fn test_event_variables_only_before_current_position() {
+    use sol_dap::variables;
+
+    // At the very beginning of testDeposit (no stepping), no events from
+    // the user's test code should have been emitted yet.
+    // (Constructor events from setUp may exist in earlier nodes.)
+    let session = create_session("testDeposit", "VaultTest");
+
+    let events_at_start = variables::event_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &session.event_signatures,
+        &session.identified_contracts,
+    );
+
+    // Run to end
+    let mut session_end = create_session("testDeposit", "VaultTest");
+    session_end.continue_to_breakpoint();
+
+    let events_at_end = variables::event_variables(
+        &session_end.debug_arena,
+        session_end.current_node,
+        session_end.current_step,
+        &session_end.event_signatures,
+        &session_end.identified_contracts,
+    );
+
+    // More events at end than at start
+    assert!(
+        events_at_end.len() > events_at_start.len(),
+        "should have more events at end ({}) than start ({})",
+        events_at_end.len(),
+        events_at_start.len(),
+    );
+}
+
+#[test]
+#[ignore]
+fn test_event_variables_show_contract_and_params() {
+    use sol_dap::variables;
+
+    let mut session = create_session("testDeposit", "VaultTest");
+    session.continue_to_breakpoint();
+
+    let events = variables::event_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &session.event_signatures,
+        &session.identified_contracts,
+    );
+
+    let deposited = events
+        .iter()
+        .find(|v| v.value.contains("Deposited"))
+        .expect("should have Deposited event");
+
+    assert!(
+        deposited.value.contains("Vault") || deposited.value.contains("vault"),
+        "should show contract name, got: {}",
+        deposited.value
+    );
+
+    assert!(
+        deposited.value.contains("99") || deposited.value.contains("fee"),
+        "should show decoded params, got: {}",
+        deposited.value
+    );
+}
+
+#[test]
+#[ignore]
+fn test_event_variables_show_emitting_address() {
+    use sol_dap::variables;
+
+    let mut session = create_session("testDeposit", "VaultTest");
+    session.continue_to_breakpoint();
+
+    let events = variables::event_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &session.event_signatures,
+        &session.identified_contracts,
+    );
+
+    let deposited = events
+        .iter()
+        .find(|v| v.value.contains("Deposited"))
+        .expect("should have Deposited event");
+
+    // Should include the emitting contract address (0x prefix)
+    assert!(
+        deposited.value.contains("0x"),
+        "should show emitting address, got: {}",
+        deposited.value
+    );
+
+    // The collected event should also have the address field
+    let collected = variables::collect_events(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &session.event_signatures,
+        &session.identified_contracts,
+    );
+    let dep_event = collected.iter().find(|e| {
+        e.event_info.as_ref().is_some_and(|i| i.name == "Deposited")
+    }).expect("should have Deposited collected event");
+    assert!(
+        !dep_event.address.is_zero(),
+        "collected event should have non-zero emitting address"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_eval_event_access() {
+    use sol_dap::evaluate::evaluate_expression;
+
+    let mut session = create_session("testDeposit", "VaultTest");
+    session.continue_to_breakpoint();
+    let step = session.current_trace_step().unwrap();
+
+    let result = evaluate_expression("event[0]", step, &session);
+    assert!(
+        !result.contains("unknown"),
+        "event[0] should work, got: {result}"
+    );
+    assert!(
+        !result.contains("parse error"),
+        "event[0] should parse, got: {result}"
+    );
+}
+
+// ============ Restart preserves breakpoints (requires forge) ============
+
+#[test]
+#[ignore]
+fn test_restart_preserves_breakpoints() {
+    use sol_dap::launch;
+    use sol_dap::session::{DebugSession, StopReason};
+
+    // Create initial session and set a breakpoint
+    let mut session = create_session("testIncrement", "CounterTest");
+    let test_file = fixture_path().join("test").join("Counter.t.sol");
+    session
+        .source_breakpoints
+        .insert(test_file.clone(), vec![15]);
+
+    // Verify breakpoint works in original session
+    let reason = session.continue_to_breakpoint();
+    assert_eq!(
+        reason,
+        StopReason::Breakpoint,
+        "breakpoint should work before restart"
+    );
+    let loc = session
+        .current_source_location()
+        .expect("should have location");
+    assert_eq!(loc.line, 15, "should stop at breakpoint line 15");
+
+    // Simulate what Command::Restart does:
+    // Save breakpoints from old session, create new session, carry them over.
+    let config = session.launch_config.clone();
+    let old_breakpoints = session.source_breakpoints.clone();
+    let ctx = launch::compile_and_debug(&config).unwrap();
+    let mut restarted_session = DebugSession::new(ctx, config);
+    restarted_session.source_breakpoints = old_breakpoints;
+
+    assert!(
+        !restarted_session.source_breakpoints.is_empty(),
+        "breakpoints should be preserved after restart"
+    );
+
+    // Continue should hit the same breakpoint in the restarted session
+    let reason = restarted_session.continue_to_breakpoint();
+    assert_eq!(
+        reason,
+        StopReason::Breakpoint,
+        "continue should hit breakpoint after restart, not run to end"
+    );
+    let loc = restarted_session
+        .current_source_location()
+        .expect("should have location");
+    assert_eq!(
+        loc.line, 15,
+        "should stop at line 15 after restart, not navigate to wrong function"
+    );
 }
 
 // ============ String decoding (no forge needed) ============

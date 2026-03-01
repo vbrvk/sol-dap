@@ -1,7 +1,11 @@
 use alloy_primitives::hex;
+use alloy_primitives::map::AddressHashMap;
 use dap::types::Variable;
 use foundry_debugger::DebugNode;
 use revm_inspectors::tracing::types::CallTraceStep;
+use std::collections::HashMap;
+
+use crate::launch::EventInfo;
 
 /// Format a U256 value based on its Solidity type.
 fn format_typed_value(val: &alloy_primitives::U256, type_hint: &str) -> String {
@@ -92,9 +96,7 @@ pub fn calldata_variables(
         // We have ABI param info — decode with names and types
         for (i, param) in params.iter().enumerate() {
             let value = if i < chunks.len() {
-                let word = alloy_primitives::U256::from_be_slice(
-                    &pad_to_32(chunks[i]),
-                );
+                let word = alloy_primitives::U256::from_be_slice(chunks[i]);
                 format_typed_value(&word, &param.1)
             } else {
                 "(missing)".to_string()
@@ -108,10 +110,10 @@ pub fn calldata_variables(
             });
         }
         // Show any extra calldata beyond params
-        for i in params.len()..chunks.len() {
+        for (i, chunk) in chunks.iter().enumerate().skip(params.len()) {
             vars.push(Variable {
                 name: format!("arg[{i}]"),
-                value: format!("0x{}", hex::encode(chunks[i])),
+                value: format!("0x{}", hex::encode(chunk)),
                 type_field: Some("bytes32".to_string()),
                 variables_reference: 0,
                 ..Default::default()
@@ -133,13 +135,6 @@ pub fn calldata_variables(
     vars
 }
 
-/// Pad a slice to 32 bytes (right-pad with zeros).
-fn pad_to_32(data: &[u8]) -> [u8; 32] {
-    let mut buf = [0u8; 32];
-    let len = data.len().min(32);
-    buf[32 - len..].copy_from_slice(&data[..len]);
-    buf
-}
 
 pub fn returndata_variables(step: &CallTraceStep) -> Vec<Variable> {
     let data = step.returndata.as_ref();
@@ -178,6 +173,204 @@ pub fn gas_info_variables(step: &CallTraceStep) -> Vec<Variable> {
     ]
 }
 
+pub fn event_variables(
+    debug_arena: &[DebugNode],
+    current_node: usize,
+    current_step: usize,
+    event_signatures: &HashMap<String, EventInfo>,
+    identified_contracts: &AddressHashMap<String>,
+) -> Vec<Variable> {
+    let events = collect_events(
+        debug_arena,
+        current_node,
+        current_step,
+        event_signatures,
+        identified_contracts,
+    );
+
+    events
+        .into_iter()
+        .enumerate()
+        .map(|(event_idx, ev)| {
+            let addr_short = format!("0x{:x}", ev.address);
+            let value = if let Some(info) = &ev.event_info {
+                let params = ev
+                    .decoded_params
+                    .iter()
+                    .map(|(n, _t, v)| format!("{n}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "{}({}).{}({})",
+                    ev.contract_name, addr_short, info.name, params
+                )
+            } else {
+                let topics = ev
+                    .topics
+                    .iter()
+                    .map(|t| format!("0x{:064x}", t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let data = hex::encode(&ev.data);
+                format!(
+                    "{}({}).LOG{}(topics=[{}], data=0x{})",
+                    ev.contract_name,
+                    addr_short,
+                    ev.topics.len(),
+                    topics,
+                    data
+                )
+            };
+
+            Variable {
+                name: format!("event[{event_idx}]"),
+                value,
+                type_field: Some("event".to_string()),
+                variables_reference: 0,
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct CollectedEvent {
+    pub address: alloy_primitives::Address,
+    pub contract_name: String,
+    pub event_info: Option<EventInfo>,
+    pub topics: Vec<alloy_primitives::U256>,
+    pub data: Vec<u8>,
+    pub decoded_params: Vec<(String, String, String)>,
+}
+
+pub fn collect_events(
+    debug_arena: &[DebugNode],
+    current_node: usize,
+    current_step: usize,
+    event_signatures: &HashMap<String, EventInfo>,
+    identified_contracts: &AddressHashMap<String>,
+) -> Vec<CollectedEvent> {
+    use alloy_primitives::U256;
+
+    fn u256_to_usize(v: U256) -> Option<usize> {
+        if v.bit_len() > usize::BITS as usize {
+            return None;
+        }
+        Some(v.to::<u64>() as usize)
+    }
+
+    let mut out = Vec::new();
+
+    for (node_idx, node) in debug_arena.iter().enumerate() {
+        if node_idx > current_node {
+            break;
+        }
+
+        let max_step = if node_idx < current_node {
+            node.steps.len()
+        } else {
+            (current_step + 1).min(node.steps.len())
+        };
+
+        for step_idx in 0..max_step {
+            let step = &node.steps[step_idx];
+            let op = step.op.get();
+            if !(0xa0..=0xa4).contains(&op) {
+                continue;
+            }
+
+            let topic_count = (op - 0xa0) as usize;
+            let Some(stack) = &step.stack else {
+                continue;
+            };
+            if stack.len() < 2 + topic_count {
+                continue;
+            }
+
+            let offset = stack[stack.len() - 1];
+            let size = stack[stack.len() - 2];
+
+            let mut topics: Vec<U256> = Vec::new();
+            for i in 0..topic_count {
+                topics.push(stack[stack.len() - 3 - i]);
+            }
+
+            let data = if let (Some(memory), Some(off), Some(sz)) = (
+                step.memory.as_ref(),
+                u256_to_usize(offset),
+                u256_to_usize(size),
+            ) {
+                let bytes = memory.as_ref();
+                let end = off.saturating_add(sz).min(bytes.len());
+                if off < bytes.len() {
+                    bytes[off..end].to_vec()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            let topic0 = topics.first().map(|t0| format!("0x{:064x}", t0));
+            let event_info = topic0
+                .as_deref()
+                .and_then(|t0| event_signatures.get(t0))
+                .cloned();
+
+            let contract_name = identified_contracts
+                .get(&node.address)
+                .cloned()
+                .unwrap_or_else(|| format!("0x{:x}", node.address));
+
+            let mut decoded_params: Vec<(String, String, String)> = Vec::new();
+            if let Some(ref info) = event_info {
+                let mut topic_idx = 1usize;
+                let mut data_word_idx = 0usize;
+                for (i, p) in info.params.iter().enumerate() {
+                    let pname = if p.name.is_empty() {
+                        format!("arg[{i}]")
+                    } else {
+                        p.name.clone()
+                    };
+
+                    let val_opt: Option<U256> = if p.indexed {
+                        topics.get(topic_idx).copied().map(|v| {
+                            topic_idx += 1;
+                            v
+                        })
+                    } else {
+                        let start = data_word_idx * 32;
+                        let end = start + 32;
+                        if end <= data.len() {
+                            data_word_idx += 1;
+                            Some(U256::from_be_slice(&data[start..end]))
+                        } else {
+                            None
+                        }
+                    };
+
+                    let formatted = match val_opt {
+                        Some(v) => format_typed_value(&v, &p.type_field),
+                        None => "(missing)".to_string(),
+                    };
+                    decoded_params.push((pname, p.type_field.clone(), formatted));
+                }
+            }
+
+            out.push(CollectedEvent {
+                address: node.address,
+                contract_name,
+                event_info,
+                topics,
+                data,
+                decoded_params,
+            });
+        }
+    }
+
+    out
+}
+
 /// Build variables from storage layout + storage change tracking.
 /// Scans ALL trace steps (including CREATE nodes) to build storage state.
 pub fn storage_variables(
@@ -192,25 +385,23 @@ pub fn storage_variables(
 
     // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
-    for (ni, node) in debug_arena.iter().enumerate() {
+    for (node_idx, node) in debug_arena.iter().enumerate() {
         if &node.address != node_address { continue; }
         // For the current node, scan ALL steps (not just up to current_step).
         // This shows storage values that will be written by the current call frame,
         // which is more useful for a post-mortem debugger than the exact mid-opcode state.
-        let max_step = if ni <= current_node {
+        let max_step = if node_idx <= current_node {
             node.steps.len()
         } else {
             continue
         };
-        for si in 0..max_step {
-            let step = &node.steps[si];
-            if step.op.get() == 0x55 {
-                if let Some(stack) = &step.stack {
-                    if stack.len() >= 2 {
+        for step_idx in 0..max_step {
+            let step = &node.steps[step_idx];
+            if step.op.get() == 0x55
+                && let Some(stack) = &step.stack
+                    && stack.len() >= 2 {
                         storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
                     }
-                }
-            }
         }
     }
 
@@ -236,9 +427,7 @@ pub fn storage_variables(
 
         let formatted = if encoding == "bytes" || type_label == "string" {
             decode_short_string(&value)
-        } else if type_label.starts_with("uint") {
-            format!("{value}")
-        } else if type_label.starts_with("int") {
+        } else if type_label.starts_with("uint") || type_label.starts_with("int") {
             format!("{value}")
         } else if type_label.starts_with("address") || type_label.starts_with("contract") {
             format!("0x{:040x}", value)
@@ -318,8 +507,8 @@ pub fn context_variables(
     // msg.sender: find the node just before the FIRST occurrence of this contract's address.
     let first_entry = debug_arena.iter()
         .position(|n| n.address == node.address);
-    if let Some(first) = first_entry {
-        if first > 0 {
+    if let Some(first) = first_entry
+        && first > 0 {
             vars.push(Variable {
                 name: "msg.sender".to_string(),
                 value: format!("0x{:x}", debug_arena[first - 1].address),
@@ -328,7 +517,6 @@ pub fn context_variables(
                 ..Default::default()
             });
         }
-    }
 
     vars
 }
@@ -364,8 +552,8 @@ pub fn local_variables(
     // Find the function's closing brace by counting braces
     let mut brace_depth = 0i32;
     let mut func_end = current_idx;
-    for i in func_start..lines.len() {
-        for ch in lines[i].chars() {
+    for (i, line) in lines.iter().enumerate().skip(func_start) {
+        for ch in line.chars() {
             if ch == '{' { brace_depth += 1; }
             if ch == '}' { brace_depth -= 1; }
         }
@@ -384,8 +572,8 @@ pub fn local_variables(
         "bytes1", "bytes2", "bytes4", "bytes8", "bytes16", "bytes20",
     ];
 
-    for i in (func_start + 1)..=func_end.min(lines.len().saturating_sub(1)) {
-        let trimmed = lines[i].trim();
+    for (i, line) in lines.iter().enumerate().take(func_end.min(lines.len().saturating_sub(1)) + 1).skip(func_start + 1) {
+        let trimmed = line.trim();
         // Skip empty lines, comments, control flow
         if trimmed.is_empty()
             || trimmed.starts_with("//")
@@ -404,8 +592,8 @@ pub fn local_variables(
 
         // Check for type-prefixed declarations: 'uint256 fee = ...' or 'bool success = ...'
         for sol_type in &solidity_types {
-            if trimmed.starts_with(sol_type) {
-                let rest = trimmed[sol_type.len()..].trim_start();
+            if let Some(rest) = trimmed.strip_prefix(sol_type) {
+                let rest = rest.trim_start();
                 // Handle memory/storage/calldata modifiers
                 let rest = rest.strip_prefix("memory ").unwrap_or(rest);
                 let rest = rest.strip_prefix("storage ").unwrap_or(rest);
@@ -482,3 +670,93 @@ pub fn local_variables(
 
     locals
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::U256;
+
+    // ── format_typed_value ──────────────────────────────────────────
+
+    #[test]
+    fn format_address_value() {
+        let val = U256::from(0xdead_beef_u64);
+        assert_eq!(
+            format_typed_value(&val, "address"),
+            "0x00000000000000000000000000000000deadbeef"
+        );
+    }
+
+    #[test]
+    fn format_contract_value_same_as_address() {
+        let val = U256::from(0xabcd_u64);
+        assert_eq!(
+            format_typed_value(&val, "contract Foo"),
+            format_typed_value(&val, "address"),
+        );
+    }
+
+    #[test]
+    fn format_bool_true_and_false() {
+        assert_eq!(format_typed_value(&U256::ZERO, "bool"), "false");
+        assert_eq!(format_typed_value(&U256::from(1u64), "bool"), "true");
+        assert_eq!(format_typed_value(&U256::from(42u64), "bool"), "true");
+    }
+
+    #[test]
+    fn format_uint_decimal() {
+        let val = U256::from(12345u64);
+        assert_eq!(format_typed_value(&val, "uint256"), "12345");
+        assert_eq!(format_typed_value(&val, "uint8"), "12345");
+        assert_eq!(format_typed_value(&val, "int256"), "12345");
+    }
+
+    #[test]
+    fn format_fixed_bytes_hex() {
+        let val = U256::from(0xff_u64);
+        let out = format_typed_value(&val, "bytes32");
+        assert!(out.starts_with("0x"), "expected hex prefix, got: {out}");
+    }
+
+    #[test]
+    fn format_unknown_type_hex() {
+        let val = U256::from(255u64);
+        let out = format_typed_value(&val, "tuple");
+        assert!(out.starts_with("0x"), "expected hex prefix for unknown type, got: {out}");
+    }
+
+    // ── decode_short_string ────────────────────────────────────────
+
+    #[test]
+    fn decode_empty_short_string() {
+        // len=0 → last byte = 0 (even), len/2=0
+        let raw = U256::ZERO;
+        assert_eq!(decode_short_string(&raw), "\"\"");
+    }
+
+    #[test]
+    fn decode_valid_short_string() {
+        // Encode "hello" (5 chars) as Solidity short string.
+        // Data: b"hello" padded to 31 bytes, last byte = 5*2 = 10
+        let mut bytes = [0u8; 32];
+        bytes[0] = b'h';
+        bytes[1] = b'e';
+        bytes[2] = b'l';
+        bytes[3] = b'l';
+        bytes[4] = b'o';
+        bytes[31] = 10; // length * 2
+        let raw = U256::from_be_bytes(bytes);
+        assert_eq!(decode_short_string(&raw), "\"hello\"");
+    }
+
+    #[test]
+    fn decode_long_string_reports_length() {
+        // Odd last byte → long string encoding
+        let mut bytes = [0u8; 32];
+        bytes[31] = 0x41; // odd → long string, length = (0x41-1)/2 = 32
+        let raw = U256::from_be_bytes(bytes);
+        let result = decode_short_string(&raw);
+        assert!(result.starts_with("(string,"), "expected long string marker, got: {result}");
+    }
+
+    }

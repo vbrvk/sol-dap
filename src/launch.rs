@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use alloy_primitives::{map::AddressHashMap, Address};
+use alloy_primitives::{hex, keccak256, map::AddressHashMap, Address};
 use eyre::{Context, OptionExt};
 use foundry_config::Config as FoundryConfig;
 use foundry_debugger::DebugNode;
@@ -13,6 +13,20 @@ use foundry_evm_traces::debug::ContractSources;
 use serde::Deserialize;
 
 use crate::config::LaunchConfig;
+
+#[derive(Debug, Clone)]
+pub struct EventParam {
+    pub name: String,
+    pub type_field: String,
+    pub indexed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct EventInfo {
+    pub name: String,
+    pub signature: String,
+    pub params: Vec<EventParam>,
+}
 /// Parsed Solidity storage layout for a contract.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct StorageLayout {
@@ -60,6 +74,7 @@ pub struct DebuggerContext {
     pub storage_layouts: HashMap<String, StorageLayout>,
     /// Function selector (4-byte hex) → function signature (e.g. "increment()")
     pub method_identifiers: HashMap<String, String>,
+    pub event_signatures: HashMap<String, EventInfo>,
     /// Function selector → parameter names and types for stack labeling
     pub function_params: HashMap<String, Vec<(String, String)>>,
     /// console.log output captured from forge test -vvv
@@ -135,7 +150,8 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         .wrap_err("failed to build ContractSources from compilation output")?;
     tracing::info!("source maps ready ({} entries)", sources.entries().count());
     // Load storage layouts from artifacts directory.
-    let (storage_layouts, method_identifiers, function_params) = load_artifact_metadata(&project.paths.artifacts)?;
+    let (storage_layouts, method_identifiers, event_signatures, function_params) =
+        load_artifact_metadata(&project.paths.artifacts)?;
     tracing::info!("loaded storage layouts for {} contracts, {} method selectors",
         storage_layouts.len(), method_identifiers.len());
 
@@ -149,6 +165,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         breakpoints: Breakpoints::default(),
         storage_layouts,
         method_identifiers,
+        event_signatures,
         function_params,
         console_logs,
     })
@@ -195,11 +212,10 @@ fn split_contract_test(contract: Option<&str>, test: &str) -> (Option<String>, S
         return (Some(contract.to_string()), test.to_string());
     }
 
-    if let Some((c, t)) = test.split_once("::") {
-        if !c.is_empty() && !t.is_empty() {
+    if let Some((c, t)) = test.split_once("::")
+        && !c.is_empty() && !t.is_empty() {
             return (Some(c.to_string()), t.to_string());
         }
-    }
 
     (None, test.to_string())
 }
@@ -226,7 +242,7 @@ fn run_forge_debug_dump(
         .arg("--dump")
         .arg(dump_path)
         .arg("--match-test")
-        .arg(match_test);
+        .arg(format!("{match_test}\\("));
 
     if let Some(contract) = match_contract {
         cmd.arg("--match-contract").arg(contract);
@@ -296,18 +312,25 @@ fn parse_identified_contracts(
     Ok(out)
 }
 
-/// Load storage layouts, method identifiers, and function parameter names from artifacts.
-fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
+/// Aggregated metadata extracted from build artifacts.
+///
+/// Contains (storage_layouts, method_selectors, function_params).
+type ArtifactMetadata = (
     HashMap<String, StorageLayout>,
     HashMap<String, String>,
+    HashMap<String, EventInfo>,
     HashMap<String, Vec<(String, String)>>,
-)> {
+);
+
+/// Load storage layouts, method identifiers, and function parameter names from artifacts.
+fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<ArtifactMetadata> {
     let mut layouts = HashMap::new();
     let mut methods: HashMap<String, String> = HashMap::new();
+    let mut event_signatures: HashMap<String, EventInfo> = HashMap::new();
     // selector -> [(param_name, param_type), ...]
     let mut params: HashMap<String, Vec<(String, String)>> = HashMap::new();
     if !artifacts_dir.exists() {
-        return Ok((layouts, methods, params));
+        return Ok((layouts, methods, event_signatures, params));
     }
     for entry in std::fs::read_dir(artifacts_dir)? {
         let entry = entry?;
@@ -324,12 +347,16 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
                 name: String,
                 #[serde(rename = "type")]
                 type_field: String,
+                #[serde(default, rename = "indexed")]
+                indexed: bool,
             }
             #[derive(Deserialize)]
             #[serde(tag = "type")]
             enum AbiItem {
                 #[serde(rename = "function")]
                 Function { name: String, #[serde(default)] inputs: Vec<AbiInput> },
+                #[serde(rename = "event")]
+                Event { name: String, #[serde(default)] inputs: Vec<AbiInput> },
                 #[serde(other)]
                 Other,
             }
@@ -350,8 +377,8 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
                 if let AbiItem::Function { name, inputs } = item {
                     // Build the signature to look up selector
                     let sig = format!("{}({})", name, inputs.iter().map(|i| i.type_field.as_str()).collect::<Vec<_>>().join(","));
-                    if let Some(mi) = mi {
-                        if let Some(selector) = mi.get(&sig) {
+                    if let Some(mi) = mi
+                        && let Some(selector) = mi.get(&sig) {
                             let param_list: Vec<(String, String)> = inputs.iter()
                                 .map(|i| (i.name.clone(), i.type_field.clone()))
                                 .collect();
@@ -359,15 +386,44 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
                                 params.insert(format!("0x{selector}"), param_list);
                             }
                         }
-                    }
                 }
             }
 
-            if let Some(layout) = artifact.storage_layout {
-                if !layout.storage.is_empty() {
-                    layouts.insert(contract_name, layout);
+            for item in &artifact.abi {
+                if let AbiItem::Event { name, inputs } = item {
+                    let sig = format!(
+                        "{}({})",
+                        name,
+                        inputs
+                            .iter()
+                            .map(|i| i.type_field.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    let topic0 = format!("0x{}", hex::encode(keccak256(sig.as_bytes())));
+                    let params = inputs
+                        .iter()
+                        .map(|i| EventParam {
+                            name: i.name.clone(),
+                            type_field: i.type_field.clone(),
+                            indexed: i.indexed,
+                        })
+                        .collect();
+                    event_signatures.insert(
+                        topic0,
+                        EventInfo {
+                            name: name.clone(),
+                            signature: sig,
+                            params,
+                        },
+                    );
                 }
             }
+
+            if let Some(layout) = artifact.storage_layout
+                && !layout.storage.is_empty() {
+                    layouts.insert(contract_name, layout);
+                }
             if let Some(mi) = artifact.method_identifiers {
                 for (sig, selector) in mi {
                     methods.insert(format!("0x{selector}"), sig);
@@ -375,7 +431,7 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
             }
         }
     }
-    Ok((layouts, methods, params))
+    Ok((layouts, methods, event_signatures, params))
 }
 
 /// Run `forge test -vvv` and capture console.log output lines.

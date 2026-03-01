@@ -9,7 +9,7 @@ use foundry_evm_traces::debug::ContractSources;
 use revm_inspectors::tracing::types::CallTraceStep;
 
 use crate::config::LaunchConfig;
-use crate::launch::{DebuggerContext, StorageLayout};
+use crate::launch::{DebuggerContext, EventInfo, StorageLayout};
 use crate::source_map::{self, SourceLocation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,7 @@ pub struct DebugSession {
     pub storage_layouts: HashMap<String, StorageLayout>,
     /// Function selector → signature for frame name resolution
     pub method_identifiers: HashMap<String, String>,
+    pub event_signatures: HashMap<String, EventInfo>,
     /// Function selector → parameter names/types for stack labeling
     pub function_params: HashMap<String, Vec<(String, String)>>,
     /// console.log output captured from forge test -vvv
@@ -51,6 +52,7 @@ impl DebugSession {
             breakpoints: ctx.breakpoints,
             storage_layouts: ctx.storage_layouts,
             method_identifiers: ctx.method_identifiers,
+            event_signatures: ctx.event_signatures,
             function_params: ctx.function_params,
             current_node: 0,
             current_step: 0,
@@ -228,11 +230,10 @@ impl DebugSession {
             if self.current_node != start_node {
                 // Skip contract-definition preamble
                 let loc = self.current_source_location();
-                if let Some(loc) = &loc {
-                    if self.is_contract_definition_line(loc) || Self::is_library_code(loc) {
+                if let Some(loc) = &loc
+                    && (self.is_contract_definition_line(loc) || Self::is_library_code(loc)) {
                         continue;
                     }
-                }
                 break;
             }
 
@@ -292,11 +293,10 @@ impl DebugSession {
                 // to land on the caller's meaningful source line.
                 loop {
                     if self.is_at_end() { break; }
-                    if let Some(loc) = self.current_source_location() {
-                        if !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
+                    if let Some(loc) = self.current_source_location()
+                        && !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
                             break;
                         }
-                    }
                     self.step_opcode();
                 }
                 break;
@@ -307,11 +307,10 @@ impl DebugSession {
                 // Skip contract-def lines in the parent
                 loop {
                     if self.is_at_end() { break; }
-                    if let Some(loc) = self.current_source_location() {
-                        if !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
+                    if let Some(loc) = self.current_source_location()
+                        && !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
                             break;
                         }
-                    }
                     self.step_opcode();
                 }
                 break;
@@ -354,7 +353,7 @@ impl DebugSession {
             self.source_breakpoints
                 .get(&loc.path)
                 .and_then(|lines| {
-                    if lines.iter().any(|&l| l == loc.line) {
+                    if lines.contains(&loc.line) {
                         Some((loc.path.clone(), loc.line))
                     } else {
                         None
@@ -379,17 +378,16 @@ impl DebugSession {
             // Check if this is a breakpoint
             let is_bp = self.source_breakpoints
                 .get(&loc.path)
-                .is_some_and(|lines| lines.iter().any(|&l| l == loc.line));
+                .is_some_and(|lines| lines.contains(&loc.line));
             if !is_bp {
                 continue;
             }
 
             // Skip if it's the same breakpoint we started on
-            if let Some((ref skip_path, skip_line)) = skip_bp {
-                if &loc.path == skip_path && loc.line == skip_line {
+            if let Some((ref skip_path, skip_line)) = skip_bp
+                && &loc.path == skip_path && loc.line == skip_line {
                     continue;
                 }
-            }
 
             return StopReason::Breakpoint;
         }
@@ -406,5 +404,61 @@ impl DebugSession {
             node.kind.is_any_create(),
             &self.launch_config.project_root,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_code_detected_forge_std() {
+        let loc = SourceLocation {
+            path: PathBuf::from("/proj/lib/forge-std/src/Test.sol"),
+            line: 10,
+            column: 1,
+            length: 5,
+        };
+        assert!(DebugSession::is_library_code(&loc));
+    }
+
+    #[test]
+    fn library_code_detected_lib_dir() {
+        let loc = SourceLocation {
+            path: PathBuf::from("/proj/lib/openzeppelin-contracts/ERC20.sol"),
+            line: 5,
+            column: 1,
+            length: 10,
+        };
+        assert!(DebugSession::is_library_code(&loc));
+    }
+
+    #[test]
+    fn library_code_detected_console() {
+        let loc = SourceLocation {
+            path: PathBuf::from("/proj/lib/forge-std/src/console.sol"),
+            line: 1,
+            column: 1,
+            length: 3,
+        };
+        assert!(DebugSession::is_library_code(&loc));
+    }
+
+    #[test]
+    fn user_code_not_flagged_as_library() {
+        let loc = SourceLocation {
+            path: PathBuf::from("/proj/src/Counter.sol"),
+            line: 15,
+            column: 1,
+            length: 8,
+        };
+        assert!(!DebugSession::is_library_code(&loc));
+    }
+
+    #[test]
+    fn stop_reason_equality() {
+        assert_eq!(StopReason::Breakpoint, StopReason::Breakpoint);
+        assert_eq!(StopReason::End, StopReason::End);
+        assert_ne!(StopReason::Breakpoint, StopReason::End);
     }
 }

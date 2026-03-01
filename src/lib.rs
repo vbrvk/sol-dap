@@ -6,6 +6,8 @@
 //! subprocess.
 
 pub mod config;
+pub mod evaluate;
+pub mod expr_parser;
 pub mod handler;
 pub mod launch;
 pub mod session;
