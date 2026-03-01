@@ -4,6 +4,18 @@
 
 sol-dap is a Debug Adapter Protocol (DAP) server that brings Foundry's Solidity debugging capabilities to any IDE or editor that supports DAP, such as Zed, VS Code, or Neovim.
 
+<p align="center">
+  <img src="docs/images/example-context.jpeg" width="700" alt="Variables and call stack inspection in Zed">
+  <br>
+  <em>Variables, storage, and call stack inspection</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/example-console.jpeg" width="700" alt="Debug console with expression evaluation">
+  <br>
+  <em>Debug console with expression evaluation</em>
+</p>
+
 ## Features
 
 - **Post-mortem Debugging**: sol-dap runs the entire test or script first, captures the full execution trace, and then allows you to navigate it. This makes stepping instant and allows for stepping backwards.
