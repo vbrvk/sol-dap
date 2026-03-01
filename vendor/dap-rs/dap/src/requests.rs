@@ -824,7 +824,7 @@ pub enum Command {
   /// terminating the debug adapter first and then launching it anew.
   ///
   /// Specification: [Restart request](https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Restart)
-  Restart(RestartArguments),
+  Restart(Option<serde_json::Value>),
   /// The request restarts execution of the specified stackframe.
   /// The debug adapter first sends the response and then a `stopped` event (with reason `restart`)
   /// after the restart has completed.
