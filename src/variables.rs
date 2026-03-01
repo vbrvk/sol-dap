@@ -18,47 +18,20 @@ fn format_typed_value(val: &alloy_primitives::U256, type_hint: &str) -> String {
     }
 }
 
-/// Format EVM stack as DAP Variables, using ABI param names when available.
-pub fn stack_variables(
-    step: &CallTraceStep,
-    function_params: Option<&[(String, String)]>,
-) -> Vec<Variable> {
+/// Format EVM stack as DAP Variables.
+pub fn stack_variables(step: &CallTraceStep) -> Vec<Variable> {
     let Some(stack) = &step.stack else {
         return Vec::new();
     };
-
     stack
         .iter()
         .enumerate()
-        .map(|(i, val)| {
-            // Try to name this stack slot from function ABI params.
-            // In the EVM, function params are pushed to the stack in reverse order
-            // at the start of a function. The bottom of the stack (index 0, 1, ...)
-            // corresponds to the function parameters.
-            let (name, type_hint) = if let Some(params) = function_params {
-                if i < params.len() {
-                    (params[i].0.clone(), Some(params[i].1.clone()))
-                } else {
-                    (format!("[{i}]"), None)
-                }
-            } else {
-                (format!("[{i}]"), None)
-            };
-
-            // Format value based on type hint
-            let value = if let Some(ref t) = type_hint {
-                format_typed_value(val, t)
-            } else {
-                format!("0x{:x}", val)
-            };
-
-            Variable {
-                name,
-                value,
-                type_field: type_hint.or(Some("uint256".to_string())),
-                variables_reference: 0,
-                ..Default::default()
-            }
+        .map(|(i, val)| Variable {
+            name: format!("[{i}]"),
+            value: format!("0x{:x}", val),
+            type_field: Some("uint256".to_string()),
+            variables_reference: 0,
+            ..Default::default()
         })
         .collect()
 }
@@ -82,35 +55,90 @@ pub fn memory_variables(step: &CallTraceStep) -> Vec<Variable> {
         .collect()
 }
 
-pub fn calldata_variables(node: &DebugNode) -> Vec<Variable> {
+/// Format calldata as DAP Variables, decoding params if ABI info available.
+pub fn calldata_variables(
+    node: &DebugNode,
+    function_params: Option<&[(String, String)]>,
+    fn_signature: Option<&str>,
+) -> Vec<Variable> {
     let data = node.calldata.as_ref();
     if data.is_empty() {
         return Vec::new();
     }
 
     let mut vars = Vec::new();
+
+    // Function selector + decoded name
     if data.len() >= 4 {
+        let sel_hex = format!("0x{}", hex::encode(&data[..4]));
+        let label = match fn_signature {
+            Some(sig) => format!("{sel_hex} ({})", sig),
+            None => sel_hex,
+        };
         vars.push(Variable {
-            name: "selector".to_string(),
-            value: format!("0x{}", hex::encode(&data[..4])),
+            name: "function".to_string(),
+            value: label,
             type_field: Some("bytes4".to_string()),
             variables_reference: 0,
             ..Default::default()
         });
     }
 
-    let args = data.get(4..).unwrap_or_default();
-    for (i, chunk) in args.chunks(32).enumerate() {
-        vars.push(Variable {
-            name: format!("arg[{i}]"),
-            value: format!("0x{}", hex::encode(chunk)),
-            type_field: Some("bytes32".to_string()),
-            variables_reference: 0,
-            ..Default::default()
-        });
+    // Decode parameters from calldata using ABI info
+    let args_data = data.get(4..).unwrap_or_default();
+    let chunks: Vec<&[u8]> = args_data.chunks(32).collect();
+
+    if let Some(params) = function_params {
+        // We have ABI param info — decode with names and types
+        for (i, param) in params.iter().enumerate() {
+            let value = if i < chunks.len() {
+                let word = alloy_primitives::U256::from_be_slice(
+                    &pad_to_32(chunks[i]),
+                );
+                format_typed_value(&word, &param.1)
+            } else {
+                "(missing)".to_string()
+            };
+            vars.push(Variable {
+                name: param.0.clone(),
+                value,
+                type_field: Some(param.1.clone()),
+                variables_reference: 0,
+                ..Default::default()
+            });
+        }
+        // Show any extra calldata beyond params
+        for i in params.len()..chunks.len() {
+            vars.push(Variable {
+                name: format!("arg[{i}]"),
+                value: format!("0x{}", hex::encode(chunks[i])),
+                type_field: Some("bytes32".to_string()),
+                variables_reference: 0,
+                ..Default::default()
+            });
+        }
+    } else {
+        // No ABI info — raw 32-byte chunks
+        for (i, chunk) in chunks.iter().enumerate() {
+            vars.push(Variable {
+                name: format!("arg[{i}]"),
+                value: format!("0x{}", hex::encode(chunk)),
+                type_field: Some("bytes32".to_string()),
+                variables_reference: 0,
+                ..Default::default()
+            });
+        }
     }
 
     vars
+}
+
+/// Pad a slice to 32 bytes (right-pad with zeros).
+fn pad_to_32(data: &[u8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    let len = data.len().min(32);
+    buf[32 - len..].copy_from_slice(&data[..len]);
+    buf
 }
 
 pub fn returndata_variables(step: &CallTraceStep) -> Vec<Variable> {

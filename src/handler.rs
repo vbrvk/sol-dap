@@ -620,19 +620,21 @@ pub fn handle_request<R: Read, W: Write>(
             });
 
             let mut vars = match (scope_type, node, step) {
-                (1, Some(node), Some(step)) => {
-                    // Look up function params from calldata selector
-                    let fn_params = if node.calldata.len() >= 4 {
-                        let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
-                        session.function_params.get(&sel).map(|v| v.as_slice())
-                    } else {
-                        None
-                    };
-                    variables::stack_variables(step, fn_params)
-                }
-                (1, _, Some(step)) => variables::stack_variables(step, None),
+                (1, _, Some(step)) => variables::stack_variables(step),
                 (2, _, Some(step)) => variables::memory_variables(step),
-                (3, Some(node), _) => variables::calldata_variables(node),
+                (3, Some(node), _) => {
+                    // Decode calldata with ABI param names if available
+                    let (fn_params, fn_sig) = if node.calldata.len() >= 4 {
+                        let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+                        (
+                            session.function_params.get(&sel).map(|v| v.as_slice()),
+                            session.method_identifiers.get(&sel).map(|s| s.as_str()),
+                        )
+                    } else {
+                        (None, None)
+                    };
+                    variables::calldata_variables(node, fn_params, fn_sig)
+                }
                 (4, _, Some(step)) => variables::returndata_variables(step),
                 (5, _, Some(step)) => variables::gas_info_variables(step),
                 (6, Some(node), _) => {
