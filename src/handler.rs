@@ -145,11 +145,8 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
         .or_else(|| session.current_address().cloned());
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if target_address.as_ref() != Some(&node.address) {
-            if ni > session.current_node { break; }
-            continue;
-        }
-        let max_step = if ni == session.current_node { session.current_step } else if ni < session.current_node { node.steps.len() } else { break };
+        if target_address.as_ref() != Some(&node.address) { continue; }
+        let max_step = if ni <= session.current_node { node.steps.len() } else { continue };
         for si in 0..max_step {
             let s = &node.steps[si];
             if s.op.get() == 0x55 {
@@ -295,16 +292,11 @@ fn eval_mapping_or_storage(
 
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if !target_addresses.contains(&node.address) {
-            if ni > session.current_node { break; }
-            continue;
-        }
-        let max_step = if ni == session.current_node {
-            session.current_step
-        } else if ni < session.current_node {
+        if !target_addresses.contains(&node.address) { continue; }
+        let max_step = if ni <= session.current_node {
             node.steps.len()
         } else {
-            break;
+            continue
         };
         for si in 0..max_step {
             let s = &node.steps[si];
