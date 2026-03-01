@@ -52,7 +52,19 @@ Since the trace is pre-recorded, stepping is instantaneous and you can step back
 
 ## Zed Editor Configuration
 
-To use sol-dap in the Zed editor, add a launch configuration to your `.zed/debug.json` file. Select a test function name in the editor, then run the debug task:
+First, register the DAP adapter in your Zed `settings.json`:
+
+```json
+{
+  "dap": {
+    "sol-dap": {
+      "binary": "/path/to/sol-dap"
+    }
+  }
+}
+```
+
+Then add a launch configuration to your `.zed/debug.json` file. Select a test function name in the editor, then run the debug task:
 
 ### Example `.zed/debug.json`
 
