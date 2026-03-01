@@ -220,13 +220,18 @@ pub fn handle_request<R: Read, W: Write>(
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
 
-                // Frame name: "ContractName::OPCODE [pc]", e.g. "Counter::SSTORE [42]"
-                let frame_name = format!(
-                    "{}::{} [pc={}]",
-                    contract_name,
-                    step.op,
-                    step.pc
-                );
+                // Resolve function name from calldata selector.
+                // The first 4 bytes of calldata are the function selector.
+                let fn_name = if node.calldata.len() >= 4 {
+                    let selector = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+                    session.method_identifiers.get(&selector).cloned()
+                } else {
+                    None
+                };
+                let frame_name = match &fn_name {
+                    Some(sig) => format!("{}::{}", contract_name, sig),
+                    None => format!("{}::{}", contract_name, node.kind),
+                };
                 let mut frame = types::StackFrame {
                     id: i as i64,
                     name: frame_name,

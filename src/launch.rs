@@ -39,6 +39,9 @@ pub struct StorageType {
     pub number_of_bytes: String,
 }
 
+/// Maps a 4-byte function selector to its signature.
+pub type MethodIdentifiers = HashMap<String, String>;
+
 #[derive(Debug)]
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
@@ -47,6 +50,8 @@ pub struct DebuggerContext {
     pub breakpoints: Breakpoints,
     /// Contract name → storage layout (for displaying Solidity variable values)
     pub storage_layouts: HashMap<String, StorageLayout>,
+    /// Function selector (4-byte hex) → function signature (e.g. "increment()")
+    pub method_identifiers: HashMap<String, String>,
 }
 
 pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerContext> {
@@ -114,8 +119,9 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         .wrap_err("failed to build ContractSources from compilation output")?;
     tracing::info!("source maps ready ({} entries)", sources.entries().count());
     // Load storage layouts from artifacts directory.
-    let storage_layouts = load_storage_layouts(&project.paths.artifacts)?;
-    tracing::info!("loaded storage layouts for {} contracts", storage_layouts.len());
+    let (storage_layouts, method_identifiers) = load_artifact_metadata(&project.paths.artifacts)?;
+    tracing::info!("loaded storage layouts for {} contracts, {} method selectors",
+        storage_layouts.len(), method_identifiers.len());
 
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
@@ -126,6 +132,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         contracts_sources: sources,
         breakpoints: Breakpoints::default(),
         storage_layouts,
+        method_identifiers,
     })
 }
 
@@ -271,54 +278,42 @@ fn parse_identified_contracts(
     Ok(out)
 }
 
-/// Load storage layouts from all artifact JSON files in the `out/` directory.
-fn load_storage_layouts(artifacts_dir: &Path) -> eyre::Result<HashMap<String, StorageLayout>> {
+/// Load storage layouts and method identifiers from artifact JSON files.
+fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(HashMap<String, StorageLayout>, HashMap<String, String>)> {
     let mut layouts = HashMap::new();
+    let mut methods: HashMap<String, String> = HashMap::new();
     if !artifacts_dir.exists() {
-        return Ok(layouts);
+        return Ok((layouts, methods));
     }
-
-    // Walk out/<ContractFile>/<Contract>.json
     for entry in std::fs::read_dir(artifacts_dir)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
+        if !entry.file_type()?.is_dir() { continue; }
         for file in std::fs::read_dir(entry.path())? {
             let file = file?;
             let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let contract_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            if contract_name.is_empty() {
-                continue;
-            }
-            let data = match std::fs::read(&path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
-            // Parse just the storageLayout field from the artifact JSON.
+            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+            let contract_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if contract_name.is_empty() { continue; }
+            let data = match std::fs::read(&path) { Ok(d) => d, Err(_) => continue };
             #[derive(Deserialize)]
             struct ArtifactPartial {
                 #[serde(default, rename = "storageLayout")]
                 storage_layout: Option<StorageLayout>,
+                #[serde(default, rename = "methodIdentifiers")]
+                method_identifiers: Option<HashMap<String, String>>,
             }
-            let artifact: ArtifactPartial = match serde_json::from_slice(&data) {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
+            let artifact: ArtifactPartial = match serde_json::from_slice(&data) { Ok(a) => a, Err(_) => continue };
             if let Some(layout) = artifact.storage_layout {
                 if !layout.storage.is_empty() {
-                    tracing::debug!("  storage layout for {contract_name}: {} vars", layout.storage.len());
                     layouts.insert(contract_name, layout);
+                }
+            }
+            if let Some(mi) = artifact.method_identifiers {
+                for (sig, selector) in mi {
+                    methods.insert(format!("0x{selector}"), sig);
                 }
             }
         }
     }
-    Ok(layouts)
+    Ok((layouts, methods))
 }

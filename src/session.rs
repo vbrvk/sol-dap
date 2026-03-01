@@ -30,6 +30,8 @@ pub struct DebugSession {
     pub launch_config: LaunchConfig,
     /// Contract name → storage layout for variable name resolution
     pub storage_layouts: HashMap<String, StorageLayout>,
+    /// Function selector → signature for frame name resolution
+    pub method_identifiers: HashMap<String, String>,
 }
 
 impl DebugSession {
@@ -40,6 +42,7 @@ impl DebugSession {
             contracts_sources: ctx.contracts_sources,
             breakpoints: ctx.breakpoints,
             storage_layouts: ctx.storage_layouts,
+            method_identifiers: ctx.method_identifiers,
             current_node: 0,
             current_step: 0,
             source_breakpoints: HashMap::new(),
