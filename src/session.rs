@@ -135,11 +135,12 @@ impl DebugSession {
         }
     }
 
-    /// Step to the next meaningful source line.
-    /// Skips opcodes with no source mapping and stops when we land on a
-    /// different (file, line) than where we started.
+    /// Step Over: advance to the next source line WITHOUT entering child calls.
+    /// If the current line triggers a CALL, skip over the entire child execution
+    /// and stop when we return to the same (or higher) call depth.
     pub fn step_next(&mut self) {
-        let start = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
+        let start_node = self.current_node;
+        let start_loc = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
 
         loop {
             if self.is_at_end() {
@@ -147,16 +148,27 @@ impl DebugSession {
             }
             self.step_opcode();
 
+            // If we entered a deeper node (child call), skip forward until we
+            // return to start_node or a later node at the same depth.
+            // In the flat arena, the "return" from a child is the next occurrence
+            // of the parent's address (or a node index > child).
+            if self.current_node > start_node {
+                // We entered a child call. Skip until we're back at start_node's
+                // address or past it.
+                self.skip_to_node_return(start_node);
+                if self.is_at_end() {
+                    break;
+                }
+            }
+
             let now = self.current_source_location();
-            match (&start, &now) {
+            match (&start_loc, &now) {
                 (None, Some(loc)) => {
-                    // Started unmapped, found mapped. Stop unless it's a contract-def line.
                     if !self.is_contract_definition_line(loc) {
                         break;
                     }
                 }
                 (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => {
-                    // Different line. Stop unless it's a contract-def line.
                     if !self.is_contract_definition_line(b) {
                         break;
                     }
@@ -166,19 +178,117 @@ impl DebugSession {
         }
     }
 
+    /// Skip forward until we return from a child call back to the parent.
+    /// The flat arena has parent nodes interleaved with child nodes:
+    ///   Node A (parent), Node B (child), Node C (parent continues), ...
+    /// When we're inside Node B, we advance until we find a node with the same
+    /// address as Node A (the parent returned).
+    fn skip_to_node_return(&mut self, parent_node_idx: usize) {
+        let parent_address = self.debug_arena[parent_node_idx].address;
+        loop {
+            if self.is_at_end() {
+                break;
+            }
+            self.step_opcode();
+            // Check if we returned to the parent (same address = same contract)
+            // and we're past the original node
+            if self.current_node > parent_node_idx
+                && self.debug_arena[self.current_node].address == parent_address
+            {
+                break;
+            }
+        }
+    }
+
+    /// Step Into: advance until entering a new DebugNode (child call).
+    /// If the current line doesn't have a CALL, behaves like step_next.
+    pub fn step_in(&mut self) {
+        let start_node = self.current_node;
+        let start_loc = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
+
+        loop {
+            if self.is_at_end() {
+                break;
+            }
+            self.step_opcode();
+
+            // If we entered a new node, stop there (stepped into the call)
+            if self.current_node != start_node {
+                // Skip contract-definition preamble
+                let loc = self.current_source_location();
+                if let Some(loc) = &loc {
+                    if self.is_contract_definition_line(loc) {
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            // If same node but different source line, stop (no call to step into)
+            let now = self.current_source_location();
+            match (&start_loc, &now) {
+                (None, Some(loc)) => {
+                    if !self.is_contract_definition_line(loc) {
+                        break;
+                    }
+                }
+                (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => {
+                    if !self.is_contract_definition_line(b) {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Step Out: advance until we leave the current node and return to the parent.
+    /// Stops at the first meaningful source line in the parent frame.
+    pub fn step_out(&mut self) {
+        if self.debug_arena.is_empty() {
+            return;
+        }
+        let start_node = self.current_node;
+        let start_address = self.debug_arena[start_node].address;
+
+        loop {
+            if self.is_at_end() {
+                break;
+            }
+            self.step_opcode();
+
+            // We've left the current node — check if we're back in the parent
+            if self.current_node > start_node
+                && self.debug_arena[self.current_node].address != start_address
+            {
+                // Landed in a different contract = still in child calls.
+                // Keep going.
+                continue;
+            }
+            if self.current_node > start_node {
+                // Same address as start but different node = we returned to caller
+                // Skip contract-definition lines
+                if let Some(loc) = self.current_source_location() {
+                    if !self.is_contract_definition_line(&loc) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Check if a source location points to a contract definition line.
     /// The solc source map maps the dispatcher preamble to the `contract X {` line.
-    /// We detect this heuristically: if pc=0 of the current node maps to the same line,
-    /// it's likely the contract definition.
-    fn is_contract_definition_line(&self, loc: &crate::source_map::SourceLocation) -> bool {
+    fn is_contract_definition_line(&self, loc: &SourceLocation) -> bool {
         let Some(node) = self.current_debug_node() else { return false };
         let Some(first_step) = node.steps.first() else { return false };
         let contract_name = match self.current_contract_name() {
             Some(n) => n,
             None => return false,
         };
-        // Check if step[0] maps to the same line as the given location
-        if let Some(first_loc) = crate::source_map::step_to_source(
+        if let Some(first_loc) = source_map::step_to_source(
             first_step, contract_name, &self.contracts_sources,
             node.kind.is_any_create(), &self.launch_config.project_root,
         ) {
@@ -186,27 +296,6 @@ impl DebugSession {
         } else {
             false
         }
-    }
-
-    pub fn step_in(&mut self) {
-        let start_node = self.current_node;
-        loop {
-            if self.is_at_end() {
-                break;
-            }
-            self.step_opcode();
-            if self.current_node != start_node {
-                break;
-            }
-        }
-    }
-
-    pub fn step_out(&mut self) {
-        if self.debug_arena.is_empty() {
-            return;
-        }
-        let last = self.current_node_step_count().saturating_sub(1);
-        self.current_step = last;
     }
 
     pub fn continue_to_breakpoint(&mut self) -> StopReason {
