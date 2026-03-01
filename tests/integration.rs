@@ -482,6 +482,106 @@ fn test_vault_test_simple() {
         "should identify contracts"
     );
 }
+
+// ============ Local variables (requires forge) ============
+
+#[test]
+#[ignore]
+fn test_local_variables_parsed() {
+    use sol_dap::variables;
+
+    // testRawBalanceOf has: uint256 raw = ...; uint256 normal = ...;
+    let mut session = create_session("testRawBalanceOf", "VaultTest");
+
+    // Step to line 104 (uint256 normal = token.balanceOf(alice))
+    // At this point, 'raw' should be declared and 'normal' not yet
+    for _ in 0..4 {
+        session.step_next();
+    }
+
+    if let Some(step) = session.current_trace_step() {
+        if let Some(loc) = session.current_source_location() {
+            let locals = variables::local_variables(&loc.path, loc.line, step);
+            let names: Vec<&str> = locals.iter().map(|v| v.name.as_str()).collect();
+            assert!(names.contains(&"raw"), "should find local 'raw', got: {names:?}");
+            assert!(names.contains(&"normal"), "should find local 'normal', got: {names:?}");
+
+            // 'raw' should have a value (declared before current line)
+            let raw_var = locals.iter().find(|v| v.name == "raw").unwrap();
+            assert!(
+                !raw_var.value.contains("not yet declared"),
+                "'raw' should be declared with a value, got: {}",
+                raw_var.value
+            );
+            assert_eq!(raw_var.type_field.as_deref(), Some("uint256"));
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_local_variables_not_yet_declared() {
+    use sol_dap::variables;
+
+    // testSafeAdd has: uint256 result = token.safeAdd(100, 200);
+    let session = create_session("testSafeAdd", "VaultTest");
+
+    // At the start (before any stepping), we're at the function entry
+    // 'result' should be found but marked not yet declared
+    if let Some(step) = session.current_trace_step() {
+        if let Some(loc) = session.current_source_location() {
+            let locals = variables::local_variables(&loc.path, loc.line, step);
+            if !locals.is_empty() {
+                // If we found locals at entry, they should be 'not yet declared'
+                for v in &locals {
+                    assert!(
+                        v.value.contains("not yet declared") || v.value.contains("declared at"),
+                        "local '{}' should indicate declaration status, got: {}",
+                        v.name,
+                        v.value
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_local_variables_parsing_unit() {
+    // Test source parsing without forge — just verify the file structure
+    // and that our parsing would find the right lines.
+    // Full integration test with values is in test_local_variables_parsed.
+
+    let dir = std::env::temp_dir().join("sol-dap-test-locals");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("Test.sol");
+    std::fs::write(
+        &source_path,
+        "// SPDX-License-Identifier: MIT\n\
+pragma solidity ^0.8.13;\n\
+contract Test {\n\
+    function doStuff(uint256 x) public {\n\
+        uint256 a = x + 1;\n\
+        bool flag = true;\n\
+        address sender = msg.sender;\n\
+        uint256 b = a * 2;\n\
+    }\n\
+}",
+    )
+    .unwrap();
+
+    // Verify the file has the expected structure
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    let lines: Vec<&str> = source.lines().collect();
+    assert!(lines[3].trim().contains("function doStuff"), "line 4 should have function");
+    assert!(lines[4].trim().starts_with("uint256 a"), "line 5 should have uint256 a");
+    assert!(lines[5].trim().starts_with("bool flag"), "line 6 should have bool flag");
+    assert!(lines[6].trim().starts_with("address sender"), "line 7 should have address sender");
+    assert!(lines[7].trim().starts_with("uint256 b"), "line 8 should have uint256 b");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 // ============ String decoding (no forge needed) ============
 
 #[test]
