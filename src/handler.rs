@@ -307,6 +307,7 @@ pub fn handle_request<R: Read, W: Write>(
     req: &dap::requests::Request,
     server: &mut dap::server::Server<R, W>,
     session: &mut Option<DebugSession>,
+    last_config: &Option<crate::config::LaunchConfig>,
 ) -> dap::responses::Response {
     match &req.command {
         Command::Initialize(_) => {
@@ -745,9 +746,12 @@ pub fn handle_request<R: Read, W: Write>(
             req.clone().success(ResponseBody::Evaluate(body))
         }
         Command::Restart(_) => {
-            let config = match session.as_ref() {
-                Some(s) => s.launch_config.clone(),
-                None => return req.clone().error("no active debug session"),
+            let config = session.as_ref()
+                .map(|s| s.launch_config.clone())
+                .or_else(|| last_config.clone());
+            let config = match config {
+                Some(c) => c,
+                None => return req.clone().error("no launch config available for restart"),
             };
 
             match crate::launch::compile_and_debug(&config) {

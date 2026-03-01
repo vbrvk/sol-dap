@@ -2,6 +2,7 @@ use std::io::{BufReader, BufWriter};
 
 use dap::prelude::*;
 
+use sol_dap::config::LaunchConfig;
 use sol_dap::{handler, session};
 
 fn main() {
@@ -16,6 +17,8 @@ fn main() {
     let output = BufWriter::new(std::io::stdout());
     let mut server = Server::new(input, output);
     let mut session: Option<session::DebugSession> = None;
+    // Keep last launch config so restart works after disconnect
+    let mut last_config: Option<LaunchConfig> = None;
 
     loop {
         match server.poll_request() {
@@ -25,10 +28,16 @@ fn main() {
                     &req.command,
                     Command::Disconnect(args) if args.restart == Some(true)
                 );
-                let is_disconnect_quit = matches!(&req.command, Command::Disconnect(_))
-                    && !is_disconnect_restart;
+                let is_disconnect_quit =
+                    matches!(&req.command, Command::Disconnect(_)) && !is_disconnect_restart;
 
-                let response = handler::handle_request(&req, &mut server, &mut session);
+                // Save launch config before handler might clear session
+                if let Some(s) = session.as_ref() {
+                    last_config = Some(s.launch_config.clone());
+                }
+
+                let response =
+                    handler::handle_request(&req, &mut server, &mut session, &last_config);
                 if let Err(e) = server.respond(response) {
                     tracing::error!("failed to send response: {e}");
                 }
@@ -38,9 +47,12 @@ fn main() {
                     }
                 }
                 if is_disconnect_restart {
-                    // Rerun: clear session, stay alive for new initialize+launch
                     tracing::info!("disconnect(restart=true), clearing session");
                     session = None;
+                    // Re-emit initialized so Zed sends new launch
+                    if let Err(e) = server.send_event(Event::Initialized) {
+                        tracing::error!("failed to emit initialized event: {e:?}");
+                    }
                 }
                 if is_disconnect_quit {
                     tracing::info!("disconnect received, exiting");
