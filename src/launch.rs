@@ -6,7 +6,6 @@ use std::{
 
 use alloy_primitives::{map::AddressHashMap, Address};
 use eyre::{Context, OptionExt};
-use foundry_common::compile::ProjectCompiler;
 use foundry_config::Config as FoundryConfig;
 use foundry_debugger::DebugNode;
 use foundry_evm_core::Breakpoints;
@@ -119,7 +118,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     let compiler = foundry_compilers::project::ProjectCompiler::with_sources(&project, sources_input)
         .wrap_err("failed to create compiler")?;
     let output = compiler.compile().wrap_err("foundry compilation failed")?;
-    let sources = ContractSources::from_project_output(&output, project_root, None)
+    let _sources = ContractSources::from_project_output(&output, project_root, None)
         .wrap_err("failed to build ContractSources from compilation output")?;
     let artifact_count = output.artifact_ids().count();
     tracing::info!("compilation produced {artifact_count} artifacts");

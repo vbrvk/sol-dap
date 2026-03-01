@@ -1014,7 +1014,7 @@ pub fn handle_request<R: Read, W: Write>(
             } else {
                 // DAP spec: data is base64-encoded.
                 // Simple base64 encoding without pulling in another crate.
-                use alloy_primitives::hex;
+                
                 // Use hex encoding as a fallback readable format.
                 // Zed's memory viewer can handle this.
                 Some(base64_encode(slice))
