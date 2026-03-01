@@ -88,11 +88,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     .wrap_err("forge test --debug failed")?;
 
     // Capture console.log output by running forge test -vvv
-    let console_logs = capture_console_logs(
-        project_root,
-        match_contract.as_deref(),
-        &match_test,
-    );
+    let console_logs = capture_console_logs(project_root, match_contract.as_deref(), &match_test);
     tracing::info!("captured {} console.log lines", console_logs.len());
 
     // Now build ContractSources from the compilation artifacts forge left behind.
@@ -382,48 +378,23 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
     Ok((layouts, methods, params))
 }
 
-/// Run `forge test -vvv` and capture console.log output.
-/// Returns the log lines (without the "Logs:" header).
-fn capture_console_logs(
-    project_root: &Path,
-    match_contract: Option<&str>,
-    match_test: &str,
-) -> Vec<String> {
+/// Run `forge test -vvv` and capture console.log output lines.
+fn capture_console_logs(project_root: &Path, match_contract: Option<&str>, match_test: &str) -> Vec<String> {
     let mut cmd = Command::new("forge");
-    cmd.arg("test")
-        .arg("--match-test")
-        .arg(match_test)
-        .arg("-vvv")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+    cmd.arg("test").arg("--match-test").arg(match_test).arg("-vvv")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
         .current_dir(project_root);
-
-    if let Some(contract) = match_contract {
-        cmd.arg("--match-contract").arg(contract);
-    }
-
-    let output = match cmd.output() {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
-
+    if let Some(c) = match_contract { cmd.arg("--match-contract").arg(c); }
+    let output = match cmd.output() { Ok(o) => o, Err(_) => return Vec::new() };
     let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Parse the "Logs:" section from forge test output
     let mut logs = Vec::new();
-    let mut in_logs_section = false;
+    let mut in_logs = false;
     for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed == "Logs:" {
-            in_logs_section = true;
-            continue;
-        }
-        if in_logs_section {
-            if trimmed.is_empty() || trimmed.starts_with("Suite") || trimmed.starts_with("Ran") {
-                break;
-            }
-            logs.push(trimmed.to_string());
+        let t = line.trim();
+        if t == "Logs:" { in_logs = true; continue; }
+        if in_logs {
+            if t.is_empty() || t.starts_with("Suite") || t.starts_with("Ran") { break; }
+            logs.push(t.to_string());
         }
     }
     logs

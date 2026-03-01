@@ -441,6 +441,55 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+/// Emit console.log output when stepping past a source line containing console.log.
+fn emit_console_logs<R: Read, W: Write>(
+    server: &mut dap::server::Server<R, W>,
+    session: &mut Option<DebugSession>,
+) {
+    let Some(session) = session.as_mut() else { return };
+    let Some(loc) = session.current_source_location() else { return };
+
+    // Skip forge-std internals
+    let path_str = loc.path.to_string_lossy();
+    if path_str.contains("forge-std") || path_str.contains("console.sol") {
+        return;
+    }
+
+    // Deduplicate: don't emit again for the same position
+    let pos = (loc.path.clone(), loc.line);
+    if session.last_console_log_pos.as_ref() == Some(&pos) {
+        return;
+    }
+
+    // Check if current source line contains console.log
+    let source = match std::fs::read_to_string(&loc.path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let line_idx = (loc.line as usize).saturating_sub(1);
+    let Some(source_line) = source.lines().nth(line_idx) else { return };
+    if !source_line.contains("console.log") && !source_line.contains("console2.log") {
+        return;
+    }
+
+    // Emit the next pending log
+    if session.next_console_log_idx < session.console_logs.len() {
+        let msg = session.console_logs[session.next_console_log_idx].clone();
+        let _ = server.send_event(Event::Output(events::OutputEventBody {
+            category: Some(types::OutputEventCategory::Console),
+            output: format!("{msg}\n"),
+            data: None,
+            source: None,
+            line: None,
+            column: None,
+            variables_reference: None,
+            group: None,
+        }));
+        session.next_console_log_idx += 1;
+        session.last_console_log_pos = Some(pos);
+    }
+}
+
 /// Find the first step in a node that maps to a meaningful source location
 /// (i.e., not the contract definition line which is the dispatcher preamble).
 /// Returns the step index, falling back to 0 if nothing better is found.
@@ -479,7 +528,7 @@ fn find_meaningful_step(
 
 fn emit_stopped<R: Read, W: Write>(
     server: &mut dap::server::Server<R, W>,
-    session: &Option<DebugSession>,
+    session: &mut Option<DebugSession>,
     reason: types::StoppedEventReason,
     description: Option<String>,
 ) {
@@ -493,6 +542,7 @@ fn emit_stopped<R: Read, W: Write>(
         hit_breakpoint_ids: None,
     }));
     emit_memory_event(server, session);
+    emit_console_logs(server, session);
 }
 
 /// Emit a memory event indicating the EVM memory has been updated.
@@ -553,19 +603,6 @@ pub fn handle_request<R: Read, W: Write>(
 
             match crate::launch::compile_and_debug(&config) {
                 Ok(ctx) => {
-                    // Emit console.log output as DAP output events
-                    for log_line in &ctx.console_logs {
-                        let _ = server.send_event(Event::Output(events::OutputEventBody {
-                            category: Some(types::OutputEventCategory::Console),
-                            output: format!("{log_line}\n"),
-                            data: None,
-                            source: None,
-                            line: None,
-                            column: None,
-                            variables_reference: None,
-                            group: None,
-                        }));
-                    }
                     *session = Some(DebugSession::new(ctx, config));
 
                     emit_stopped(server, session, types::StoppedEventReason::Entry, None);

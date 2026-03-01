@@ -34,6 +34,12 @@ pub struct DebugSession {
     pub method_identifiers: HashMap<String, String>,
     /// Function selector → parameter names/types for stack labeling
     pub function_params: HashMap<String, Vec<(String, String)>>,
+    /// console.log output captured from forge test -vvv
+    pub console_logs: Vec<String>,
+    /// Index of next console log to emit
+    pub next_console_log_idx: usize,
+    /// Last source position where we emitted a console log
+    pub last_console_log_pos: Option<(PathBuf, i64)>,
 }
 
 impl DebugSession {
@@ -49,6 +55,9 @@ impl DebugSession {
             current_node: 0,
             current_step: 0,
             source_breakpoints: HashMap::new(),
+            console_logs: ctx.console_logs,
+            next_console_log_idx: 0,
+            last_console_log_pos: None,
             launch_config: config,
         }
     }
@@ -167,12 +176,12 @@ impl DebugSession {
             let now = self.current_source_location();
             match (&start_loc, &now) {
                 (None, Some(loc)) => {
-                    if !self.is_contract_definition_line(loc) {
+                    if !self.is_contract_definition_line(loc) && !Self::is_library_code(loc) {
                         break;
                     }
                 }
                 (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => {
-                    if !self.is_contract_definition_line(b) {
+                    if !self.is_contract_definition_line(b) && !Self::is_library_code(b) {
                         break;
                     }
                 }
@@ -220,7 +229,7 @@ impl DebugSession {
                 // Skip contract-definition preamble
                 let loc = self.current_source_location();
                 if let Some(loc) = &loc {
-                    if self.is_contract_definition_line(loc) {
+                    if self.is_contract_definition_line(loc) || Self::is_library_code(loc) {
                         continue;
                     }
                 }
@@ -231,12 +240,12 @@ impl DebugSession {
             let now = self.current_source_location();
             match (&start_loc, &now) {
                 (None, Some(loc)) => {
-                    if !self.is_contract_definition_line(loc) {
+                    if !self.is_contract_definition_line(loc) && !Self::is_library_code(loc) {
                         break;
                     }
                 }
                 (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => {
-                    if !self.is_contract_definition_line(b) {
+                    if !self.is_contract_definition_line(b) && !Self::is_library_code(b) {
                         break;
                     }
                 }
@@ -284,7 +293,7 @@ impl DebugSession {
                 loop {
                     if self.is_at_end() { break; }
                     if let Some(loc) = self.current_source_location() {
-                        if !self.is_contract_definition_line(&loc) {
+                        if !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
                             break;
                         }
                     }
@@ -299,7 +308,7 @@ impl DebugSession {
                 loop {
                     if self.is_at_end() { break; }
                     if let Some(loc) = self.current_source_location() {
-                        if !self.is_contract_definition_line(&loc) {
+                        if !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
                             break;
                         }
                     }
@@ -327,6 +336,15 @@ impl DebugSession {
         } else {
             false
         }
+    }
+
+    /// Check if a source location is in a library (forge-std, lib/).
+    /// These should be skipped during stepping to stay in user code.
+    fn is_library_code(loc: &SourceLocation) -> bool {
+        let path_str = loc.path.to_string_lossy();
+        path_str.contains("forge-std")
+            || path_str.contains("/lib/")
+            || path_str.contains("console.sol")
     }
 
     pub fn continue_to_breakpoint(&mut self) -> StopReason {
