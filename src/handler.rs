@@ -31,10 +31,17 @@ fn evaluate_expression(
             .map(|a| format!("0x{:x}", a))
             .unwrap_or_else(|| "N/A".to_string()),
         "msg.sender" | "caller" => {
-            if session.current_node > 0 {
-                format!("0x{:x}", session.debug_arena[session.current_node - 1].address)
+            let current_addr = session.current_address().cloned();
+            let first_entry = session.debug_arena.iter()
+                .position(|n| Some(&n.address) == current_addr.as_ref());
+            if let Some(first) = first_entry {
+                if first > 0 {
+                    format!("0x{:x}", session.debug_arena[first - 1].address)
+                } else {
+                    "N/A (top-level call)".to_string()
+                }
             } else {
-                "N/A (top-level call)".to_string()
+                "N/A".to_string()
             }
         }
 
@@ -309,6 +316,9 @@ fn eval_mapping_or_storage(
             }
         }
     }
+    if let Some(_val) = storage.get(&current_slot) {
+    } else {
+    }
 
     let value = storage.get(&current_slot).copied().unwrap_or_default();
 
@@ -357,13 +367,15 @@ fn resolve_value(
             .unwrap_or_default();
     }
 
-    // msg.sender / caller — find the actual calling contract by scanning backward
-    // for the first node with a different address (the one that made the CALL)
+    // msg.sender / caller — find the contract that originally CALLed this contract.
+    // Find the node just BEFORE the first occurrence of the current address in the arena.
     if expr == "msg.sender" || expr == "caller" {
         let current_addr = session.current_address().cloned();
-        for ni in (0..session.current_node).rev() {
-            if Some(&session.debug_arena[ni].address) != current_addr.as_ref() {
-                return U256::from_be_slice(session.debug_arena[ni].address.as_slice());
+        let first_entry = session.debug_arena.iter()
+            .position(|n| Some(&n.address) == current_addr.as_ref());
+        if let Some(first) = first_entry {
+            if first > 0 {
+                return U256::from_be_slice(session.debug_arena[first - 1].address.as_slice());
             }
         }
         return U256::ZERO;

@@ -183,7 +183,7 @@ pub fn gas_info_variables(step: &CallTraceStep) -> Vec<Variable> {
 pub fn storage_variables(
     debug_arena: &[DebugNode],
     current_node: usize,
-    current_step: usize,
+    _current_step: usize,
     node_address: &alloy_primitives::Address,
     layout: &crate::launch::StorageLayout,
 ) -> Vec<Variable> {
@@ -192,7 +192,6 @@ pub fn storage_variables(
 
     // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
-    tracing::debug!("storage_variables: scanning for addr={:?}, current_node={}, current_step={}", node_address, current_node, current_step);
     for (ni, node) in debug_arena.iter().enumerate() {
         if &node.address != node_address { continue; }
         // For the current node, scan ALL steps (not just up to current_step).
@@ -283,7 +282,7 @@ pub fn decode_short_string(raw: &alloy_primitives::U256) -> String {
 /// Build context variables for a call frame.
 pub fn context_variables(
     node: &DebugNode,
-    node_index: usize,
+    _node_index: usize,
     debug_arena: &[DebugNode],
     step: Option<&CallTraceStep>,
 ) -> Vec<Variable> {
@@ -316,20 +315,18 @@ pub fn context_variables(
         ..Default::default()
     });
 
-    // msg.sender: scan backward for the first node with a different address (the caller)
-    if node_index > 0 {
-        let current_addr = &node.address;
-        for ni in (0..node_index).rev() {
-            if &debug_arena[ni].address != current_addr {
-                vars.push(Variable {
-                    name: "msg.sender".to_string(),
-                    value: format!("0x{:x}", debug_arena[ni].address),
-                    type_field: Some("address".to_string()),
-                    variables_reference: 0,
-                    ..Default::default()
-                });
-                break;
-            }
+    // msg.sender: find the node just before the FIRST occurrence of this contract's address.
+    let first_entry = debug_arena.iter()
+        .position(|n| n.address == node.address);
+    if let Some(first) = first_entry {
+        if first > 0 {
+            vars.push(Variable {
+                name: "msg.sender".to_string(),
+                value: format!("0x{:x}", debug_arena[first - 1].address),
+                type_field: Some("address".to_string()),
+                variables_reference: 0,
+                ..Default::default()
+            });
         }
     }
 
