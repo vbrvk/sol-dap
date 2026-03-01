@@ -1,6 +1,8 @@
 # sol-dap — Debug Adapter Protocol server for Foundry Solidity debugger
 
-sol-dap is a Debug Adapter Protocol (DAP) server that brings Foundry's powerful Solidity debugging capabilities to any IDE or editor that supports DAP, such as Zed, VS Code, or Neovim.
+> **⚠️ Early MVP — mostly vibe-coded.** This project is in a very early stage. Expect rough edges, missing features, and breaking changes. Contributions and bug reports are welcome, but set your expectations accordingly.
+
+sol-dap is a Debug Adapter Protocol (DAP) server that brings Foundry's Solidity debugging capabilities to any IDE or editor that supports DAP, such as Zed, VS Code, or Neovim.
 
 ## Features
 
@@ -21,13 +23,7 @@ sol-dap is a Debug Adapter Protocol (DAP) server that brings Foundry's powerful 
 
 ## Installation
 
-Install from crates.io:
-
-```bash
-cargo install sol-dap
-```
-
-Or install from source for development:
+Install from source:
 
 ```bash
 cargo install --path .
@@ -36,7 +32,7 @@ cargo install --path .
 ## How It Works
 
 sol-dap implements a post-mortem debugging approach. When a debug session starts, it:
-1. Shells out to `forge` to run the specified test or script with the `--debug --dump` flags.
+1. Shells out to `forge` to run the specified test with the `--debug --dump` flags.
 2. Captures the resulting execution trace and source maps.
 3. Provides a DAP interface to navigate this recorded trace.
 
@@ -68,16 +64,8 @@ The following fields are supported in the `launch` request configuration:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `project_root` | string | Yes | Path to the Foundry project root. |
-| `test` | string | No* | Name of the test function to debug. |
-| `script` | string | No* | Path to the Solidity script to debug. |
+| `test` | string | Yes | Name of the test function to debug. |
 | `contract` | string | No | Name of the contract containing the test. |
-| `sig` | string | No | Function signature to call in a script. |
-| `profile` | string | No | Foundry profile to use for compilation and execution. |
-| `fork_url` | string | No | URL of the RPC endpoint for forking. |
-| `fork_block_number` | number | No | Block number to fork from. |
-| `verbosity` | number | No | Verbosity level for Foundry (0-5). |
-
-*\*Note: You must specify either `test` or `script`.*
 
 ## Supported DAP Features
 
