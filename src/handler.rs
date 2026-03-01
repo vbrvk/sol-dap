@@ -115,8 +115,8 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
     use alloy_primitives::U256;
     use std::collections::HashMap;
 
-    let mut slot_info: Option<(U256, &str, &str)> = None;
-    for layout in session.storage_layouts.values() {
+    let mut slot_info: Option<(U256, &str, &str, &str)> = None;  // slot, type_label, encoding, contract_name
+    for (contract_name, layout) in &session.storage_layouts {
         for entry in &layout.storage {
             if entry.label == name {
                 let slot: U256 = entry.slot.parse().unwrap_or_default();
@@ -124,13 +124,13 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
                     .map(|t| t.label.as_str()).unwrap_or("unknown");
                 let encoding = layout.types.get(&entry.type_key)
                     .and_then(|t| t.encoding.as_deref()).unwrap_or("");
-                slot_info = Some((slot, type_label, encoding));
+                slot_info = Some((slot, type_label, encoding, contract_name.as_str()));
                 break;
             }
         }
     }
 
-    let Some((slot, type_label, encoding)) = slot_info else {
+    let Some((slot, type_label, encoding, owner_name)) = slot_info else {
         return format!("variable '{}' not found in storage layout", name);
     };
 
@@ -138,11 +138,14 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
         return format!("{name} ({type_label})");
     }
 
-    // Replay SSTORE for current contract address
-    let current_address = session.current_address().cloned();
+    // Replay SSTORE for the owning contract's address
+    let target_address = session.identified_contracts.iter()
+        .find(|(_, v)| v.as_str() == owner_name)
+        .map(|(addr, _)| *addr)
+        .or_else(|| session.current_address().cloned());
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if current_address.as_ref() != Some(&node.address) {
+        if target_address.as_ref() != Some(&node.address) {
             if ni > session.current_node { break; }
             continue;
         }
@@ -194,23 +197,23 @@ fn eval_mapping_or_storage(
     };
     let var_name = &expr[..bracket_pos];
 
-    // Check if it's a known storage mapping
+    // Check if it's a known storage mapping — search ALL contracts' layouts
     let mut mapping_slot: Option<U256> = None;
     let mut value_type: Option<String> = None;
-    for layout in session.storage_layouts.values() {
+    let mut owner_contract: Option<String> = None;
+    for (contract_name, layout) in &session.storage_layouts {
         for entry in &layout.storage {
             if entry.label == var_name {
                 let encoding = layout.types.get(&entry.type_key)
                     .and_then(|t| t.encoding.as_deref()).unwrap_or("");
                 if encoding == "mapping" {
                     mapping_slot = Some(entry.slot.parse().unwrap_or_default());
-                    // Get the value type of the mapping
                     let vtype = layout.types.get(&entry.type_key)
                         .and_then(|t| t.value_type.as_deref());
                     if let Some(vt) = vtype {
-                        let label = layout.types.get(vt).map(|t| t.label.clone());
-                        value_type = label;
+                        value_type = layout.types.get(vt).map(|t| t.label.clone());
                     }
+                    owner_contract = Some(contract_name.clone());
                 }
                 break;
             }
@@ -258,11 +261,17 @@ fn eval_mapping_or_storage(
         current_slot = U256::from_be_bytes(alloy_primitives::keccak256(&data).0);
     }
 
-    // Look up the computed slot in storage
-    let current_address = session.current_address().cloned();
+    // Scan nodes matching the owning contract's address (not necessarily current address).
+    // This allows evaluating e.g. Vault's deposits[msg.sender] while stopped in VaultTest.
+    let target_address = owner_contract.as_ref().and_then(|name| {
+        session.identified_contracts.iter()
+            .find(|(_, v)| v.as_str() == name)
+            .map(|(addr, _)| *addr)
+    }).or_else(|| session.current_address().cloned());
+
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if current_address.as_ref() != Some(&node.address) {
+        if target_address.as_ref() != Some(&node.address) {
             if ni > session.current_node { break; }
             continue;
         }
