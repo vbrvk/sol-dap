@@ -271,15 +271,23 @@ fn test_stack_variables() {
         if let Some(step) = session.current_trace_step() {
             if step.stack.as_ref().is_some_and(|s| !s.is_empty()) {
                 let vars = variables::stack_variables(step);
-                assert!(!vars.is_empty(), "stack variables should not be empty when stack has items");
+                assert!(
+                    !vars.is_empty(),
+                    "stack variables should not be empty when stack has items"
+                );
                 found_stack = true;
                 break;
             }
         }
-        if session.is_at_end() { break; }
+        if session.is_at_end() {
+            break;
+        }
         session.step_opcode();
     }
-    assert!(found_stack, "should find at least one step with non-empty stack");
+    assert!(
+        found_stack,
+        "should find at least one step with non-empty stack"
+    );
 }
 
 #[test]
@@ -469,7 +477,10 @@ fn test_vault_test_simple() {
     // Use testSafeAdd which is a pure function test
     let session = create_session("testSafeAdd", "VaultTest");
     assert!(!session.debug_arena.is_empty(), "should have debug data");
-    assert!(!session.identified_contracts.is_empty(), "should identify contracts");
+    assert!(
+        !session.identified_contracts.is_empty(),
+        "should identify contracts"
+    );
 }
 // ============ String decoding (no forge needed) ============
 

@@ -751,6 +751,12 @@ pub fn handle_request<R: Read, W: Write>(
 
             let scopes = vec![
                 types::Scope {
+                    name: "Locals".to_string(),
+                    variables_reference: 8000 + frame_id,
+                    expensive: false,
+                    ..Default::default()
+                },
+                types::Scope {
                     name: "Stack".to_string(),
                     variables_reference: 1000 + frame_id,
                     expensive: false,
@@ -868,6 +874,21 @@ pub fn handle_request<R: Read, W: Write>(
                 }
                 (7, Some(node), step) => {
                     variables::context_variables(node, frame_idx, &session.debug_arena, step)
+                }
+                (8, _, Some(step)) => {
+                    // Locals: parse source file for local variable declarations
+                    if let Some(loc) = source_map::step_to_source(
+                        step,
+                        session.identified_contracts.get(&session.debug_arena[frame_idx].address)
+                            .map(|s| s.as_str()).unwrap_or(""),
+                        &session.contracts_sources,
+                        session.debug_arena[frame_idx].kind.is_any_create(),
+                        &session.launch_config.project_root,
+                    ) {
+                        variables::local_variables(&loc.path, loc.line, step)
+                    } else {
+                        Vec::new()
+                    }
                 }
                 _ => Vec::new(),
             };

@@ -324,3 +324,153 @@ pub fn context_variables(
 
     vars
 }
+
+/// Extract local variable declarations from a Solidity function body.
+/// Parses the source file to find the enclosing function and its local
+/// variable declarations (e.g., `uint256 fee = ...`, `bool success = ...`).
+///
+/// Returns variables with their names and types. Values are inferred from
+/// the stack when possible.
+pub fn local_variables(
+    source_path: &std::path::Path,
+    current_line: i64,
+    step: &CallTraceStep,
+) -> Vec<Variable> {
+    let source = match std::fs::read_to_string(source_path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let lines: Vec<&str> = source.lines().collect();
+
+    // Find the enclosing function: scan backward from current_line for 'function ...'
+    let current_idx = (current_line as usize).saturating_sub(1);
+    let mut func_start = current_idx;
+    for i in (0..=current_idx.min(lines.len().saturating_sub(1))).rev() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("function ") || trimmed.contains("function ") {
+            func_start = i;
+            break;
+        }
+    }
+
+    // Find the function's closing brace by counting braces
+    let mut brace_depth = 0i32;
+    let mut func_end = current_idx;
+    for i in func_start..lines.len() {
+        for ch in lines[i].chars() {
+            if ch == '{' { brace_depth += 1; }
+            if ch == '}' { brace_depth -= 1; }
+        }
+        if brace_depth <= 0 && i > func_start {
+            func_end = i;
+            break;
+        }
+    }
+
+    // Parse local variable declarations within the function body
+    let mut locals: Vec<Variable> = Vec::new();
+    let solidity_types = [
+        "uint256", "uint128", "uint64", "uint32", "uint16", "uint8", "uint",
+        "int256", "int128", "int64", "int32", "int16", "int8", "int",
+        "address", "bool", "bytes32", "bytes", "string",
+        "bytes1", "bytes2", "bytes4", "bytes8", "bytes16", "bytes20",
+    ];
+
+    for i in (func_start + 1)..=func_end.min(lines.len().saturating_sub(1)) {
+        let trimmed = lines[i].trim();
+        // Skip empty lines, comments, control flow
+        if trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with('{')
+            || trimmed.starts_with('}')
+            || trimmed.starts_with("require")
+            || trimmed.starts_with("if ")
+            || trimmed.starts_with("for ")
+            || trimmed.starts_with("while ")
+            || trimmed.starts_with("emit ")
+            || trimmed.starts_with("revert ")
+            || trimmed.starts_with("return")
+        {
+            continue;
+        }
+
+        // Check for type-prefixed declarations: 'uint256 fee = ...' or 'bool success = ...'
+        for sol_type in &solidity_types {
+            if trimmed.starts_with(sol_type) {
+                let rest = trimmed[sol_type.len()..].trim_start();
+                // Handle memory/storage/calldata modifiers
+                let rest = rest.strip_prefix("memory ").unwrap_or(rest);
+                let rest = rest.strip_prefix("storage ").unwrap_or(rest);
+                let rest = rest.strip_prefix("calldata ").unwrap_or(rest);
+                // Extract variable name (word before = or ;)
+                let var_name: String = rest.chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !var_name.is_empty() {
+                    let declared = i < current_idx; // only show if line is before current
+                    let line_num = i + 1;
+                    locals.push(Variable {
+                        name: var_name,
+                        value: if declared {
+                            format!("(declared at line {line_num})")
+                        } else {
+                            "(not yet declared)".to_string()
+                        },
+                        type_field: Some(sol_type.to_string()),
+                        variables_reference: 0,
+                        ..Default::default()
+                    });
+                }
+                break;
+            }
+        }
+
+        // Also handle contract/interface type declarations: 'SimpleToken token = ...'
+        // These start with an uppercase letter
+        if trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
+            let type_name: String = trimmed.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let rest = trimmed[type_name.len()..].trim_start();
+            let var_name: String = rest.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !var_name.is_empty() && !var_name.starts_with(char::is_uppercase) {
+                let declared = i < current_idx;
+                let line_num = i + 1;
+                locals.push(Variable {
+                    name: var_name,
+                    value: if declared {
+                        format!("(declared at line {line_num})")
+                    } else {
+                        "(not yet declared)".to_string()
+                    },
+                    type_field: Some(type_name),
+                    variables_reference: 0,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    // Try to assign values from the stack for the most recently declared local.
+    // The topmost stack value often corresponds to the result of the previous expression.
+    // This is a best-effort heuristic.
+    if let Some(stack) = &step.stack {
+        // Assign stack values top-down to the most recently declared locals
+        let declared_locals: Vec<usize> = locals.iter().enumerate()
+            .filter(|(_, v)| v.value.starts_with("(declared"))
+            .map(|(i, _)| i)
+            .rev()
+            .collect();
+        for (stack_idx, &local_idx) in declared_locals.iter().enumerate() {
+            if stack_idx < stack.len() {
+                let val = stack[stack.len() - 1 - stack_idx];
+                let type_hint = locals[local_idx].type_field.as_deref().unwrap_or("");
+                locals[local_idx].value = format_typed_value(&val, type_hint);
+            }
+        }
+    }
+
+    locals
+}
