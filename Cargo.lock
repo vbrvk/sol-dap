@@ -5971,6 +5971,7 @@ name = "sol-dap"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "base64",
  "dap",
  "eyre",
  "foundry-common",

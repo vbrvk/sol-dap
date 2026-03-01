@@ -69,3 +69,74 @@ fn byte_offset_to_line_col(source: &str, offset: usize) -> (i64, i64) {
     let column = (offset.saturating_sub(last_newline)) as i64 + 1;
     (line, column)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_offset_first_char() {
+        let (line, col) = byte_offset_to_line_col("hello\nworld", 0);
+        assert_eq!(line, 1);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn byte_offset_mid_first_line() {
+        let (line, col) = byte_offset_to_line_col("hello\nworld", 3);
+        assert_eq!(line, 1);
+        assert_eq!(col, 4); // 'l' at index 3
+    }
+
+    #[test]
+    fn byte_offset_second_line_start() {
+        // "hello\n" = 6 bytes, so offset 6 = first char of line 2
+        let (line, col) = byte_offset_to_line_col("hello\nworld", 6);
+        assert_eq!(line, 2);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn byte_offset_second_line_mid() {
+        let (line, col) = byte_offset_to_line_col("hello\nworld", 8);
+        assert_eq!(line, 2);
+        assert_eq!(col, 3); // 'r' at offset 8
+    }
+
+    #[test]
+    fn byte_offset_beyond_end_clamped() {
+        let (line, col) = byte_offset_to_line_col("ab", 100);
+        // Should clamp to end (offset=2), line=1, col=3
+        assert_eq!(line, 1);
+        assert_eq!(col, 3);
+    }
+
+    #[test]
+    fn byte_offset_empty_source() {
+        let (line, col) = byte_offset_to_line_col("", 0);
+        assert_eq!(line, 1);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn byte_offset_multiple_newlines() {
+        let source = "a\nb\nc\nd";
+        let (line, col) = byte_offset_to_line_col(source, 6); // 'c' at index 4, then newline at 5, 'd' at 6
+        assert_eq!(line, 4);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn source_location_fields_populated() {
+        let loc = SourceLocation {
+            path: PathBuf::from("test.sol"),
+            line: 10,
+            column: 5,
+            length: 20,
+        };
+        assert_eq!(loc.path, PathBuf::from("test.sol"));
+        assert_eq!(loc.line, 10);
+        assert_eq!(loc.column, 5);
+        assert_eq!(loc.length, 20);
+    }
+}
