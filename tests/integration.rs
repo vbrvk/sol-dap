@@ -515,6 +515,57 @@ fn test_console_logs_captured() {
     );
 }
 
+#[test]
+#[ignore]
+fn test_storage_eval_cross_contract() {
+    use sol_dap::variables;
+
+    // Vault's totalDeposits should be non-zero after deposit.
+    // Use testFeeCalculation which does vault.deposit(1000e18).
+    let mut session = create_session("testFeeCalculation", "VaultTest");
+    session.continue_to_breakpoint();
+
+    let layout = session.storage_layouts.get("Vault")
+        .expect("should have Vault storage layout");
+    let vault_addr = session.identified_contracts.iter()
+        .find(|(_, name)| name.as_str() == "Vault")
+        .map(|(addr, _)| *addr)
+        .expect("should find Vault address");
+
+    let vars = variables::storage_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+        &vault_addr,
+        layout,
+    );
+    let total = vars.iter().find(|v| v.name == "totalDeposits")
+        .expect("should find totalDeposits");
+    assert!(total.value != "0",
+        "totalDeposits should be non-zero after deposit, got: {}", total.value);
+}
+
+#[test]
+fn test_mapping_keccak256_slot_computation() {
+    use alloy_primitives::{keccak256, U256};
+
+    // Verify our keccak256(abi.encode(key, slot)) matches what Solidity produces.
+    // For mapping(address => uint256) at slot 2, key = 0x7fa9...
+    let key = U256::from_str_radix("7fa9385be102ac3eac297483dd6233d62b3e1496", 16).unwrap();
+    let slot = U256::from(2);
+    let mut data = [0u8; 64];
+    key.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[i] = b);
+    slot.to_be_bytes::<32>().iter().enumerate().for_each(|(i, &b)| data[32 + i] = b);
+    let computed = U256::from_be_bytes(keccak256(&data).0);
+
+    // This is the actual slot that forge writes to for deposits[0x7fa9...]
+    // Verified from trace: SSTORE slot=0x6e10ff27cae71a13525bd61167857e5c982b4674c8e654900e4e9d5035811f78
+    let expected = U256::from_str_radix(
+        "6e10ff27cae71a13525bd61167857e5c982b4674c8e654900e4e9d5035811f78", 16
+    ).unwrap();
+    assert_eq!(computed, expected, "keccak256 mapping slot should match");
+}
+
 // ============ Local variables (requires forge) ============
 
 #[test]
