@@ -9,6 +9,203 @@ use crate::config::LaunchConfig;
 use crate::session::{DebugSession, StopReason};
 use crate::{source_map, variables};
 
+
+/// Evaluate an expression in the debug console.
+fn evaluate_expression(
+    expr: &str,
+    step: &revm_inspectors::tracing::types::CallTraceStep,
+    session: &DebugSession,
+) -> String {
+    match expr {
+        // === EVM execution context ===
+        "pc" => step.pc.to_string(),
+        "op" | "opcode" => step.op.to_string(),
+        "gas" => step.gas_remaining.to_string(),
+        "gas_cost" => step.gas_cost.to_string(),
+        "depth" | "node" => session.current_node.to_string(),
+        "step" => session.current_step.to_string(),
+
+        // === Addresses ===
+        "address" | "this" => session
+            .current_address()
+            .map(|a| format!("0x{:x}", a))
+            .unwrap_or_else(|| "N/A".to_string()),
+        "msg.sender" | "caller" => {
+            if session.current_node > 0 {
+                format!("0x{:x}", session.debug_arena[session.current_node - 1].address)
+            } else {
+                "N/A (top-level call)".to_string()
+            }
+        }
+
+        // === Memory ===
+        "memory" | "memory.length" => step
+            .memory
+            .as_ref()
+            .map(|m| format!("{} bytes", m.len()))
+            .unwrap_or_else(|| "not available".to_string()),
+
+        // === Calldata / returndata ===
+        "calldata" | "msg.data" => session
+            .current_debug_node()
+            .map(|n| format!("0x{}", hex::encode(&n.calldata)))
+            .unwrap_or_default(),
+        "returndata" => format!("0x{}", hex::encode(&step.returndata)),
+
+        // === Stack ===
+        "stack" => {
+            match &step.stack {
+                Some(stack) => {
+                    if stack.is_empty() {
+                        "[] (empty)".to_string()
+                    } else {
+                        let items: Vec<String> = stack.iter().enumerate().rev()
+                            .map(|(i, v)| format!("  [{}] 0x{:x}", i, v))
+                            .collect();
+                        format!("Stack ({} items):\n{}", stack.len(), items.join("\n"))
+                    }
+                }
+                None => "not available".to_string(),
+            }
+        }
+
+        // === Storage variables (by Solidity name) ===
+        // e.g. typing "number" or "counter" in the console
+        _ if is_storage_variable(expr, session) => {
+            eval_storage_variable(expr, session)
+        }
+
+        // === stack[N] ===
+        _ if expr.starts_with("stack[") && expr.ends_with(']') => {
+            let idx_str = &expr[6..expr.len() - 1];
+            match idx_str.parse::<usize>() {
+                Ok(idx) => {
+                    if let Some(stack) = &step.stack {
+                        if idx < stack.len() {
+                            format!("0x{:x}", stack[stack.len() - 1 - idx])
+                        } else {
+                            format!("stack index {idx} out of bounds (stack has {} items)", stack.len())
+                        }
+                    } else {
+                        "stack not available".to_string()
+                    }
+                }
+                Err(_) => "invalid stack index".to_string(),
+            }
+        }
+
+        // === memory[offset] or memory[offset:length] ===
+        _ if expr.starts_with("memory[") && expr.ends_with(']') => {
+            let inner = &expr[7..expr.len() - 1];
+            eval_memory_slice(inner, step)
+        }
+
+        // === Help ===
+        "help" | "?" => {
+            "Available expressions:\n\
+              pc, op, gas, gas_cost, depth, step\n\
+              address, this, msg.sender, caller\n\
+              stack, stack[N]\n\
+              memory, memory[offset], memory[offset:length]\n\
+              calldata, msg.data, returndata\n\
+              <variable_name> (storage variables, e.g. 'number', 'counter')\n\
+              help, ?"
+            .to_string()
+        }
+
+        _ => format!("unknown expression: '{}'. Type 'help' for available expressions.", expr),
+    }
+}
+
+/// Check if an expression matches a storage variable name in any contract.
+fn is_storage_variable(name: &str, session: &DebugSession) -> bool {
+    for layout in session.storage_layouts.values() {
+        if layout.storage.iter().any(|e| e.label == name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Evaluate a storage variable by name — replays SSTORE ops to get current value.
+fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
+    use alloy_primitives::U256;
+    use std::collections::HashMap;
+
+    // Find which slot(s) this variable maps to
+    let mut slot_info: Option<(U256, &str)> = None;
+    for layout in session.storage_layouts.values() {
+        for entry in &layout.storage {
+            if entry.label == name {
+                let slot: U256 = entry.slot.parse().unwrap_or_default();
+                let type_label = layout.types.get(&entry.type_key)
+                    .map(|t| t.label.as_str())
+                    .unwrap_or("unknown");
+                slot_info = Some((slot, type_label));
+                break;
+            }
+        }
+    }
+
+    let Some((slot, type_label)) = slot_info else {
+        return format!("variable '{}' not found in storage layout", name);
+    };
+
+    // Replay SSTORE operations to find the current value
+    let mut storage: HashMap<U256, U256> = HashMap::new();
+    for (ni, node) in session.debug_arena.iter().enumerate() {
+        let max_step = if ni == session.current_node { session.current_step } else if ni < session.current_node { node.steps.len() } else { break };
+        for si in 0..max_step {
+            let s = &node.steps[si];
+            if s.op.get() == 0x55 { // SSTORE
+                if let Some(stack) = &s.stack {
+                    if stack.len() >= 2 {
+                        storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
+                    }
+                }
+            }
+        }
+    }
+
+    let value = storage.get(&slot).copied().unwrap_or_default();
+
+    // Format based on type
+    let formatted = if type_label.starts_with("uint") {
+        format!("{}", value)
+    } else if type_label.starts_with("address") || type_label.starts_with("contract") {
+        format!("0x{:040x}", value)
+    } else if type_label == "bool" {
+        if value.is_zero() { "false".to_string() } else { "true".to_string() }
+    } else {
+        format!("0x{:x}", value)
+    };
+
+    format!("{} ({}) = {}", name, type_label, formatted)
+}
+
+/// Evaluate memory[offset] or memory[offset:length]
+fn eval_memory_slice(inner: &str, step: &revm_inspectors::tracing::types::CallTraceStep) -> String {
+    let memory = match &step.memory {
+        Some(m) => m.as_ref(),
+        None => return "memory not available".to_string(),
+    };
+
+    let (offset, length) = if let Some((off_s, len_s)) = inner.split_once(':') {
+        let off = off_s.trim().parse::<usize>().unwrap_or(0);
+        let len = len_s.trim().parse::<usize>().unwrap_or(32);
+        (off, len)
+    } else {
+        let off = inner.trim().parse::<usize>().unwrap_or(0);
+        (off, 32) // default 32 bytes (one word)
+    };
+
+    if offset >= memory.len() {
+        return format!("offset {} out of bounds (memory is {} bytes)", offset, memory.len());
+    }
+    let end = (offset + length).min(memory.len());
+    format!("0x{}", hex::encode(&memory[offset..end]))
+}
+
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(data: &[u8]) -> String {
@@ -98,6 +295,7 @@ pub fn handle_request<R: Read, W: Write>(
         Command::ConfigurationDone(_) => req.clone().success(ResponseBody::ConfigurationDone),
         Command::Disconnect(_) => req.clone().success(ResponseBody::Disconnect),
         Command::Launch(args) => {
+            tracing::info!("launch args: {:?}", args.additional_data);
             let config = match args.additional_data.as_ref() {
                 Some(data) => match LaunchConfig::from_args(data) {
                     Ok(c) => c,
@@ -481,47 +679,8 @@ pub fn handle_request<R: Read, W: Write>(
                     }));
             };
 
-            let result = match args.expression.as_str() {
-                "pc" => step.pc.to_string(),
-                "op" => step.op.to_string(),
-                "gas" => step.gas_remaining.to_string(),
-                "address" => session
-                    .current_address()
-                    .map(|a| a.to_string())
-                    .unwrap_or_default(),
-                "memory.length" => step
-                    .memory
-                    .as_ref()
-                    .map(|m| m.len().to_string())
-                    .unwrap_or_else(|| "0".to_string()),
-                "calldata" => session
-                    .current_debug_node()
-                    .map(|n| format!("0x{}", hex::encode(&n.calldata)))
-                    .unwrap_or_default(),
-                "returndata" => format!("0x{}", hex::encode(&step.returndata)),
-                "depth" => session.current_node.to_string(),
-                "node" => session.current_node.to_string(),
-                "step" => session.current_step.to_string(),
-
-                s if s.starts_with("stack[") && s.ends_with(']') => {
-                    let idx_str = &s[6..s.len() - 1];
-                    match idx_str.parse::<usize>() {
-                        Ok(idx) => {
-                            if let Some(stack) = &step.stack {
-                                if idx < stack.len() {
-                                    stack[stack.len() - 1 - idx].to_string()
-                                } else {
-                                    "stack index out of bounds".to_string()
-                                }
-                            } else {
-                                "stack not available".to_string()
-                            }
-                        }
-                        Err(_) => "invalid stack index".to_string(),
-                    }
-                }
-                _ => "not implemented".to_string(),
-            };
+            let expr = args.expression.trim();
+            let result = evaluate_expression(expr, step, session);
 
             let body = responses::EvaluateResponse {
                 result,
