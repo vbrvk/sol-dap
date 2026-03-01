@@ -231,6 +231,42 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+/// Find the first step in a node that maps to a meaningful source location
+/// (i.e., not the contract definition line which is the dispatcher preamble).
+/// Returns the step index, falling back to 0 if nothing better is found.
+fn find_meaningful_step(
+    node: &foundry_debugger::DebugNode,
+    contract_name: &str,
+    sources: &foundry_evm_traces::debug::ContractSources,
+    project_root: &std::path::Path,
+) -> usize {
+    let is_create = node.kind.is_any_create();
+    // Get the source location of step 0 (the dispatcher)
+    let first_loc = node.steps.first().and_then(|s| {
+        source_map::step_to_source(s, contract_name, sources, is_create, project_root)
+    });
+    let first_line = first_loc.as_ref().map(|l| (&l.path, l.line));
+
+    // Scan forward for a step that maps to a DIFFERENT source line
+    for (i, step) in node.steps.iter().enumerate().skip(1) {
+        if let Some(loc) = source_map::step_to_source(step, contract_name, sources, is_create, project_root) {
+            match &first_line {
+                Some((first_path, first_ln)) => {
+                    if &loc.path != *first_path || loc.line != *first_ln {
+                        return i;
+                    }
+                }
+                None => return i, // first was unmapped, this one is mapped
+            }
+        }
+        // Don't scan too far — the dispatcher is usually <50 opcodes
+        if i > 100 {
+            break;
+        }
+    }
+    0 // fallback to first step
+}
+
 fn emit_stopped<R: Read, W: Write>(
     server: &mut dap::server::Server<R, W>,
     session: &Option<DebugSession>,
@@ -403,20 +439,23 @@ pub fn handle_request<R: Read, W: Write>(
                 .enumerate()
                 .take(session.current_node.saturating_add(1))
             {
-                let step_idx = if i == session.current_node {
-                    session.current_step
-                } else {
-                    0
-                };
-                let Some(step) = node.steps.get(step_idx) else {
-                    continue;
-                };
-
                 let contract_name = session
                     .identified_contracts
                     .get(&node.address)
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
+
+                // For the current frame, use the current step.
+                // For parent frames, find the first step with a meaningful source location
+                // (skip the dispatcher preamble that maps to the contract definition line).
+                let step_idx = if i == session.current_node {
+                    session.current_step
+                } else {
+                    find_meaningful_step(node, contract_name, &session.contracts_sources, &session.launch_config.project_root)
+                };
+                let Some(step) = node.steps.get(step_idx) else {
+                    continue;
+                };
 
                 // Resolve function name from calldata selector.
                 // The first 4 bytes of calldata are the function selector.

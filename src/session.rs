@@ -139,7 +139,6 @@ impl DebugSession {
     /// Skips opcodes with no source mapping and stops when we land on a
     /// different (file, line) than where we started.
     pub fn step_next(&mut self) {
-        // Record starting source location (ignoring unmapped positions).
         let start = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
 
         loop {
@@ -150,13 +149,42 @@ impl DebugSession {
 
             let now = self.current_source_location();
             match (&start, &now) {
-                // Started unmapped, found a mapped line → stop.
-                (None, Some(_)) => break,
-                // Started mapped, landed on a DIFFERENT mapped line → stop.
-                (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => break,
-                // Same line or currently unmapped → keep going.
+                (None, Some(loc)) => {
+                    // Started unmapped, found mapped. Stop unless it's a contract-def line.
+                    if !self.is_contract_definition_line(loc) {
+                        break;
+                    }
+                }
+                (Some(a), Some(b)) if a.0 != b.path || a.1 != b.line => {
+                    // Different line. Stop unless it's a contract-def line.
+                    if !self.is_contract_definition_line(b) {
+                        break;
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Check if a source location points to a contract definition line.
+    /// The solc source map maps the dispatcher preamble to the `contract X {` line.
+    /// We detect this heuristically: if pc=0 of the current node maps to the same line,
+    /// it's likely the contract definition.
+    fn is_contract_definition_line(&self, loc: &crate::source_map::SourceLocation) -> bool {
+        let Some(node) = self.current_debug_node() else { return false };
+        let Some(first_step) = node.steps.first() else { return false };
+        let contract_name = match self.current_contract_name() {
+            Some(n) => n,
+            None => return false,
+        };
+        // Check if step[0] maps to the same line as the given location
+        if let Some(first_loc) = crate::source_map::step_to_source(
+            first_step, contract_name, &self.contracts_sources,
+            node.kind.is_any_create(), &self.launch_config.project_root,
+        ) {
+            first_loc.path == loc.path && first_loc.line == loc.line
+        } else {
+            false
         }
     }
 
