@@ -2,6 +2,7 @@
 pragma solidity ^0.8.13;
 
 import "../src/Vault.sol";
+import "forge-std/console.sol";
 
 // ============ Mock callback for testing cross-contract calls ============
 
@@ -86,12 +87,23 @@ contract VaultTest {
         token.mint(address(this), 1000e18);
         token.approve(address(vaultCb), 1000e18);
 
+        console.log(
+            "Before deposit: balance =",
+            token.balanceOf(address(this))
+        );
+        console.log("Depositing 100e18 into VaultWithCallback");
+
         vaultCb.depositWithCallback(100e18);
+
+        console.log("After deposit: callback count =", callback.callCount());
+        console.log("Callback last amount =", callback.lastAmount());
+        console.log("Callback last user =", callback.lastUser());
 
         // Verify callback was called
         assert(callback.callCount() == 1);
         assert(callback.lastAmount() == 99e18);
         assert(callback.lastUser() == address(this));
+        console.log("All assertions passed!");
     }
 
     // ============ Inline assembly ============

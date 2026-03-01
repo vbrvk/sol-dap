@@ -3,3 +3,4 @@
 # Foundry build artifacts in test fixtures
 tests/fixtures/sample-project/out/
 cache
+tests/fixtures/sample-project/lib/

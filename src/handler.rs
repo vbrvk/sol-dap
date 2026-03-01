@@ -553,6 +553,19 @@ pub fn handle_request<R: Read, W: Write>(
 
             match crate::launch::compile_and_debug(&config) {
                 Ok(ctx) => {
+                    // Emit console.log output as DAP output events
+                    for log_line in &ctx.console_logs {
+                        let _ = server.send_event(Event::Output(events::OutputEventBody {
+                            category: Some(types::OutputEventCategory::Console),
+                            output: format!("{log_line}\n"),
+                            data: None,
+                            source: None,
+                            line: None,
+                            column: None,
+                            variables_reference: None,
+                            group: None,
+                        }));
+                    }
                     *session = Some(DebugSession::new(ctx, config));
 
                     emit_stopped(server, session, types::StoppedEventReason::Entry, None);
