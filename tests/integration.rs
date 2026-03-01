@@ -221,6 +221,33 @@ fn test_breakpoint_hit() {
     assert_eq!(loc.line, 15);
 }
 
+#[test]
+#[ignore]
+fn test_continue_skips_current_breakpoint() {
+    use sol_dap::session::StopReason;
+
+    let mut session = create_session("testIncrement", "CounterTest");
+
+    // Set breakpoints on two different lines
+    let test_file = fixture_path().join("test").join("Counter.t.sol");
+    // line 15: counter.increment()
+    // line 16: assert(counter.number() == 1)
+    session.source_breakpoints.insert(test_file.clone(), vec![15, 16]);
+
+    // First continue: should hit line 15
+    let reason = session.continue_to_breakpoint();
+    assert_eq!(reason, StopReason::Breakpoint);
+    let loc = session.current_source_location().expect("should have location");
+    assert_eq!(loc.line, 15, "first breakpoint should be line 15");
+
+    // Second continue: should hit line 16, NOT line 15 again
+    let reason = session.continue_to_breakpoint();
+    assert_eq!(reason, StopReason::Breakpoint);
+    let loc = session.current_source_location().expect("should have location");
+    assert_eq!(loc.line, 16,
+        "second continue should skip to line 16, not re-hit line 15");
+}
+
 // ============ Source mapping (requires forge) ============
 
 #[test]
