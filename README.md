@@ -40,22 +40,23 @@ Since the trace is pre-recorded, stepping is instantaneous and you can step back
 
 ## Zed Editor Configuration
 
-To use sol-dap in the Zed editor, you can add a launch configuration to your `.zed/debug.json` file (or your global `settings.json` under `tasks`).
+To use sol-dap in the Zed editor, add a launch configuration to your `.zed/debug.json` file. Select a test function name in the editor, then run the debug task:
 
 ### Example `.zed/debug.json`
 
 ```json
-{
-  "label": "Debug Solidity Test",
-  "adapter": "sol-dap",
-  "configuration": {
+[
+  {
+    "label": "Debug selected test",
+    "adapter": "sol-dap",
     "request": "launch",
-    "project_root": "${workspaceFolder}",
-    "test": "testTransfer",
-    "contract": "TokenTest"
+    "project_root": "$ZED_WORKTREE_ROOT",
+    "test": "$ZED_SELECTED_TEXT"
   }
-}
+]
 ```
+
+Select the test function name (e.g. `testTransfer`), then run **Debug: Start** from the command palette.
 
 ## Launch Configuration Options
 
