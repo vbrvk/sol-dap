@@ -35,6 +35,7 @@ fn eval_ast(
             format_u256_result(val)
         }
         Expr::StackIndex(idx) => eval_stack_index(*idx, step),
+        Expr::LogAccess(idx) => eval_log_index(*idx, session),
         Expr::EventAccess { index, field_index } => eval_event_access(*index, *field_index, session),
         Expr::EventField { index, field } => eval_event_field(*index, field, session),
         Expr::MemoryAccess { offset, length } => eval_memory_access(*offset, *length, step),
@@ -76,6 +77,7 @@ fn eval_to_u256(
                 .and_then(|s| if idx < s.len() { Some(s[s.len() - 1 - idx]) } else { None })
                 .unwrap_or_default()
         }
+        Expr::LogAccess(_) => U256::ZERO,
         Expr::Keyword(kw) => resolve_keyword_to_u256(kw, step, session),
         Expr::Ident(name) => resolve_ident_to_u256(name, step, session),
         Expr::MappingLookup { name, keys } => {
@@ -196,10 +198,28 @@ fn eval_keyword(
             }
             None => "not available".to_string(),
         },
+        "log" => {
+            let logs = variables::collect_console_logs(
+                &session.debug_arena,
+                session.current_node,
+                session.current_step,
+            );
+            if logs.is_empty() {
+                "[] (no console logs)".to_string()
+            } else {
+                let items: Vec<String> = logs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| format!("  log[{i}] {v}"))
+                    .collect();
+                format!("Console Logs ({}):\n{}", logs.len(), items.join("\n"))
+            }
+        }
         "help" | "?" => "Available expressions:\n\
               pc, op, gas, gas_cost, depth, step\n\
               address, this, msg.sender, caller\n\
               stack, stack[N]\n\
+              log, log[N]\n\
               memory, memory[offset], memory[offset:length]\n\
               calldata, msg.data, returndata\n\
               <variable_name> (storage variables, e.g. 'number')\n\
@@ -211,6 +231,17 @@ fn eval_keyword(
             .to_string(),
         _ => format!("unknown keyword: {kw}"),
     }
+}
+
+fn eval_log_index(idx: u64, session: &DebugSession) -> String {
+    let logs = variables::collect_console_logs(&session.debug_arena, session.current_node, session.current_step);
+    let i: usize = match idx.try_into() {
+        Ok(v) => v,
+        Err(_) => return "log index too large".to_string(),
+    };
+    logs.get(i)
+        .cloned()
+        .unwrap_or_else(|| format!("log[{idx}] out of range ({} logs)", logs.len()))
 }
 
 fn resolve_keyword_to_u256(

@@ -35,12 +35,8 @@ pub struct DebugSession {
     pub event_signatures: HashMap<String, EventInfo>,
     /// Function selector → parameter names/types for stack labeling
     pub function_params: HashMap<String, Vec<(String, String)>>,
-    /// console.log output captured from forge test -vvv
-    pub console_logs: Vec<String>,
-    /// Index of next console log to emit
-    pub next_console_log_idx: usize,
-    /// Last source position where we emitted a console log
-    pub last_console_log_pos: Option<(PathBuf, i64)>,
+    /// Number of console.log messages already emitted to the debug console
+    pub last_emitted_log_count: usize,
 }
 
 impl DebugSession {
@@ -57,10 +53,8 @@ impl DebugSession {
             current_node: 0,
             current_step: 0,
             source_breakpoints: HashMap::new(),
-            console_logs: ctx.console_logs,
-            next_console_log_idx: 0,
-            last_console_log_pos: None,
             launch_config: config,
+            last_emitted_log_count: 0,
         }
     }
 

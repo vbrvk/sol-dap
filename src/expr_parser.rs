@@ -42,6 +42,7 @@ pub enum Expr {
     Ident(String),
     /// Stack index: `stack[0]`, `stack[12]`
     StackIndex(u64),
+    LogAccess(u64),
     EventAccess {
         index: u64,
         field_index: Option<u64>,
@@ -88,6 +89,7 @@ const KEYWORDS: &[&str] = &[
     "msg.data",
     "returndata",
     "stack",
+    "log",
     "help",
     "?",
 ];
@@ -231,6 +233,14 @@ fn parse_atom(input: &str) -> Result<Expr, String> {
         return match inner.parse::<u64>() {
             Ok(idx) => Ok(Expr::StackIndex(idx)),
             Err(_) => Err(format!("invalid stack index: {inner}")),
+        };
+    }
+
+    if let Some(inner) = input.strip_prefix("log[").and_then(|s| s.strip_suffix(']')) {
+        let inner = inner.trim();
+        return match inner.parse::<u64>() {
+            Ok(idx) => Ok(Expr::LogAccess(idx)),
+            Err(_) => Err(format!("invalid log index: {inner}")),
         };
     }
 

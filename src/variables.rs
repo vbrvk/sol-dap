@@ -1,4 +1,4 @@
-use alloy_primitives::hex;
+use alloy_primitives::{hex, U256};
 use alloy_primitives::map::AddressHashMap;
 use dap::types::Variable;
 use foundry_debugger::DebugNode;
@@ -466,6 +466,186 @@ pub fn decode_short_string(raw: &alloy_primitives::U256) -> String {
         let len = (total - alloy_primitives::U256::from(1)) / alloy_primitives::U256::from(2);
         format!("(string, {len} bytes)")
     }
+}
+
+const CONSOLE_LOG_ADDRESS_BYTES: [u8; 20] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f,
+    0x6c, 0x65, 0x2e, 0x6c, 0x6f, 0x67,
+];
+
+fn decode_console_log(calldata: &[u8]) -> String {
+    fn u256_to_usize(v: U256) -> Option<usize> {
+        if v.bit_len() > usize::BITS as usize {
+            return None;
+        }
+        Some(v.to::<u64>() as usize)
+    }
+
+    if calldata.len() < 4 {
+        return "(empty)".to_string();
+    }
+    let args = &calldata[4..];
+    if args.is_empty() {
+        return "(empty)".to_string();
+    }
+
+    let words: Vec<&[u8]> = args.chunks(32).collect();
+    let mut consumed = vec![false; words.len()];
+    let mut parts: Vec<String> = Vec::new();
+
+    for (i, word) in words.iter().enumerate() {
+        if consumed[i] {
+            continue;
+        }
+
+        if word.len() < 32 {
+            parts.push(format!("0x{}", hex::encode(word)));
+            consumed[i] = true;
+            continue;
+        }
+
+        let val = U256::from_be_slice(word);
+
+        if let Some(off) = u256_to_usize(val) {
+            if off % 32 == 0 && off + 32 <= args.len() {
+                let len_word_idx = off / 32;
+                if len_word_idx < words.len() && words[len_word_idx].len() == 32 {
+                    let len_u256 = U256::from_be_slice(words[len_word_idx]);
+                    if let Some(len) = u256_to_usize(len_u256) {
+                        if len <= 10_000 {
+                            let data_start = off + 32;
+                            let data_end = data_start.saturating_add(len);
+                            if data_start <= args.len() && data_end <= args.len() {
+                                let bytes = &args[data_start..data_end];
+                                if let Ok(s) = std::str::from_utf8(bytes) {
+                                    parts.push(s.to_string());
+                                    consumed[i] = true;
+                                    let data_words = (len + 31) / 32;
+                                    let total_words = 1 + data_words;
+                                    for j in len_word_idx..len_word_idx.saturating_add(total_words) {
+                                        if j < consumed.len() {
+                                            consumed[j] = true;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if word[..31].iter().all(|&b| b == 0) && (word[31] == 0 || word[31] == 1) {
+            parts.push(if word[31] == 0 { "false".to_string() } else { "true".to_string() });
+            consumed[i] = true;
+            continue;
+        }
+
+        // Non-string, non-bool value: show as decimal
+        parts.push(format!("{val}"));
+        consumed[i] = true;
+        continue;
+    }
+
+    if parts.is_empty() {
+        "(empty)".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+pub fn collect_console_logs(
+    debug_arena: &[DebugNode],
+    current_node: usize,
+    current_step: usize,
+) -> Vec<String> {
+    fn u256_to_usize(v: U256) -> Option<usize> {
+        if v.bit_len() > usize::BITS as usize {
+            return None;
+        }
+        Some(v.to::<u64>() as usize)
+    }
+
+    if debug_arena.is_empty() {
+        return Vec::new();
+    }
+
+    let mut addr32 = [0u8; 32];
+    addr32[12..].copy_from_slice(&CONSOLE_LOG_ADDRESS_BYTES);
+    let console_addr_u256 = U256::from_be_bytes(addr32);
+
+    let mut out = Vec::new();
+
+    let end = (current_node + 1).min(debug_arena.len());
+    for (node_idx, node) in debug_arena.iter().enumerate().take(end) {
+        if node.address.as_slice() == CONSOLE_LOG_ADDRESS_BYTES {
+            out.push(decode_console_log(node.calldata.as_ref()));
+            continue;
+        }
+
+        let max_step = if node_idx < current_node {
+            node.steps.len()
+        } else {
+            (current_step + 1).min(node.steps.len())
+        };
+
+        for step_idx in 0..max_step {
+            let step = &node.steps[step_idx];
+            if step.op.get() != 0xfa {
+                continue;
+            }
+
+            let Some(stack) = &step.stack else {
+                continue;
+            };
+            if stack.len() < 6 {
+                continue;
+            }
+
+            let to = stack[stack.len().saturating_sub(2)];
+            if to != console_addr_u256 {
+                continue;
+            }
+
+            let in_offset = stack[stack.len().saturating_sub(3)];
+            let in_size = stack[stack.len().saturating_sub(4)];
+
+            let Some(memory) = step.memory.as_ref() else {
+                continue;
+            };
+            let (Some(off), Some(sz)) = (u256_to_usize(in_offset), u256_to_usize(in_size)) else {
+                continue;
+            };
+            let bytes = memory.as_ref();
+            let end = off.saturating_add(sz);
+            if off > bytes.len() || end > bytes.len() {
+                continue;
+            }
+
+            out.push(decode_console_log(&bytes[off..end]));
+        }
+    }
+
+    out
+}
+
+pub fn console_log_variables(
+    debug_arena: &[DebugNode],
+    current_node: usize,
+    current_step: usize,
+) -> Vec<Variable> {
+    collect_console_logs(debug_arena, current_node, current_step)
+        .into_iter()
+        .enumerate()
+        .map(|(i, value)| Variable {
+            name: format!("log[{i}]"),
+            value,
+            type_field: Some("string".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// Build context variables for a call frame.

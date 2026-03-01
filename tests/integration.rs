@@ -522,35 +522,54 @@ fn test_vault_test_simple() {
 
 #[test]
 #[ignore]
+fn test_console_log_variables() {
+    use sol_dap::variables;
+
+    let mut session = create_session("testDepositWithCallback", "VaultTest");
+    session.continue_to_breakpoint();
+
+    let logs = variables::console_log_variables(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+    );
+
+    assert!(!logs.is_empty(), "should have console.log entries");
+
+    let all_values: Vec<&str> = logs.iter().map(|v| v.value.as_str()).collect();
+    let has_deposit_msg = all_values
+        .iter()
+        .any(|v| v.contains("deposit") || v.contains("Deposit"));
+    assert!(
+        has_deposit_msg,
+        "should have deposit-related log message, got: {:?}",
+        all_values
+    );
+}
+
+#[test]
+#[ignore]
 fn test_console_logs_captured() {
-    use sol_dap::config::LaunchConfig;
-    use sol_dap::launch;
+    use sol_dap::variables;
 
-    let json = serde_json::json!({
-        "project_root": fixture_path().to_string_lossy().to_string(),
-        "test": "testDepositWithCallback",
-        "contract": "VaultTest"
-    });
-    let config = LaunchConfig::from_args(&json).unwrap();
-    let ctx = launch::compile_and_debug(&config).unwrap();
+    let mut session = create_session("testDepositWithCallback", "VaultTest");
+    session.continue_to_breakpoint();
 
-    assert!(
-        !ctx.console_logs.is_empty(),
-        "should capture console.log output"
+    let logs = variables::collect_console_logs(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
     );
+    assert!(!logs.is_empty(), "should capture console.log output");
     assert!(
-        ctx.console_logs
-            .iter()
-            .any(|l| l.contains("Before deposit")),
+        logs.iter().any(|l| l.contains("Before deposit")),
         "should have 'Before deposit' log, got: {:?}",
-        ctx.console_logs
+        logs
     );
     assert!(
-        ctx.console_logs
-            .iter()
-            .any(|l| l.contains("All assertions passed")),
+        logs.iter().any(|l| l.contains("All assertions passed")),
         "should have 'All assertions passed' log, got: {:?}",
-        ctx.console_logs
+        logs
     );
 }
 
@@ -1025,9 +1044,10 @@ fn test_event_variables_show_emitting_address() {
         &session.event_signatures,
         &session.identified_contracts,
     );
-    let dep_event = collected.iter().find(|e| {
-        e.event_info.as_ref().is_some_and(|i| i.name == "Deposited")
-    }).expect("should have Deposited collected event");
+    let dep_event = collected
+        .iter()
+        .find(|e| e.event_info.as_ref().is_some_and(|i| i.name == "Deposited"))
+        .expect("should have Deposited collected event");
     assert!(
         !dep_event.address.is_zero(),
         "collected event should have non-zero emitting address"
