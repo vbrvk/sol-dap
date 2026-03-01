@@ -620,7 +620,17 @@ pub fn handle_request<R: Read, W: Write>(
             });
 
             let mut vars = match (scope_type, node, step) {
-                (1, _, Some(step)) => variables::stack_variables(step),
+                (1, Some(node), Some(step)) => {
+                    // Look up function params from calldata selector
+                    let fn_params = if node.calldata.len() >= 4 {
+                        let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+                        session.function_params.get(&sel).map(|v| v.as_slice())
+                    } else {
+                        None
+                    };
+                    variables::stack_variables(step, fn_params)
+                }
+                (1, _, Some(step)) => variables::stack_variables(step, None),
                 (2, _, Some(step)) => variables::memory_variables(step),
                 (3, Some(node), _) => variables::calldata_variables(node),
                 (4, _, Some(step)) => variables::returndata_variables(step),

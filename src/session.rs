@@ -32,6 +32,8 @@ pub struct DebugSession {
     pub storage_layouts: HashMap<String, StorageLayout>,
     /// Function selector → signature for frame name resolution
     pub method_identifiers: HashMap<String, String>,
+    /// Function selector → parameter names/types for stack labeling
+    pub function_params: HashMap<String, Vec<(String, String)>>,
 }
 
 impl DebugSession {
@@ -43,6 +45,7 @@ impl DebugSession {
             breakpoints: ctx.breakpoints,
             storage_layouts: ctx.storage_layouts,
             method_identifiers: ctx.method_identifiers,
+            function_params: ctx.function_params,
             current_node: 0,
             current_step: 0,
             source_breakpoints: HashMap::new(),

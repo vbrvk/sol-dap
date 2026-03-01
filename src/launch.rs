@@ -52,6 +52,8 @@ pub struct DebuggerContext {
     pub storage_layouts: HashMap<String, StorageLayout>,
     /// Function selector (4-byte hex) → function signature (e.g. "increment()")
     pub method_identifiers: HashMap<String, String>,
+    /// Function selector → parameter names and types for stack labeling
+    pub function_params: HashMap<String, Vec<(String, String)>>,
 }
 
 pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerContext> {
@@ -119,7 +121,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         .wrap_err("failed to build ContractSources from compilation output")?;
     tracing::info!("source maps ready ({} entries)", sources.entries().count());
     // Load storage layouts from artifacts directory.
-    let (storage_layouts, method_identifiers) = load_artifact_metadata(&project.paths.artifacts)?;
+    let (storage_layouts, method_identifiers, function_params) = load_artifact_metadata(&project.paths.artifacts)?;
     tracing::info!("loaded storage layouts for {} contracts, {} method selectors",
         storage_layouts.len(), method_identifiers.len());
 
@@ -133,6 +135,7 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
         breakpoints: Breakpoints::default(),
         storage_layouts,
         method_identifiers,
+        function_params,
     })
 }
 
@@ -278,12 +281,18 @@ fn parse_identified_contracts(
     Ok(out)
 }
 
-/// Load storage layouts and method identifiers from artifact JSON files.
-fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(HashMap<String, StorageLayout>, HashMap<String, String>)> {
+/// Load storage layouts, method identifiers, and function parameter names from artifacts.
+fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(
+    HashMap<String, StorageLayout>,
+    HashMap<String, String>,
+    HashMap<String, Vec<(String, String)>>,
+)> {
     let mut layouts = HashMap::new();
     let mut methods: HashMap<String, String> = HashMap::new();
+    // selector -> [(param_name, param_type), ...]
+    let mut params: HashMap<String, Vec<(String, String)>> = HashMap::new();
     if !artifacts_dir.exists() {
-        return Ok((layouts, methods));
+        return Ok((layouts, methods, params));
     }
     for entry in std::fs::read_dir(artifacts_dir)? {
         let entry = entry?;
@@ -296,13 +305,49 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(HashMap<String,
             if contract_name.is_empty() { continue; }
             let data = match std::fs::read(&path) { Ok(d) => d, Err(_) => continue };
             #[derive(Deserialize)]
+            struct AbiInput {
+                name: String,
+                #[serde(rename = "type")]
+                type_field: String,
+            }
+            #[derive(Deserialize)]
+            #[serde(tag = "type")]
+            enum AbiItem {
+                #[serde(rename = "function")]
+                Function { name: String, #[serde(default)] inputs: Vec<AbiInput> },
+                #[serde(other)]
+                Other,
+            }
+            #[derive(Deserialize)]
             struct ArtifactPartial {
                 #[serde(default, rename = "storageLayout")]
                 storage_layout: Option<StorageLayout>,
                 #[serde(default, rename = "methodIdentifiers")]
                 method_identifiers: Option<HashMap<String, String>>,
+                #[serde(default)]
+                abi: Vec<AbiItem>,
             }
             let artifact: ArtifactPartial = match serde_json::from_slice(&data) { Ok(a) => a, Err(_) => continue };
+
+            // Build selector -> param names from ABI + methodIdentifiers
+            let mi = artifact.method_identifiers.as_ref();
+            for item in &artifact.abi {
+                if let AbiItem::Function { name, inputs } = item {
+                    // Build the signature to look up selector
+                    let sig = format!("{}({})", name, inputs.iter().map(|i| i.type_field.as_str()).collect::<Vec<_>>().join(","));
+                    if let Some(mi) = mi {
+                        if let Some(selector) = mi.get(&sig) {
+                            let param_list: Vec<(String, String)> = inputs.iter()
+                                .map(|i| (i.name.clone(), i.type_field.clone()))
+                                .collect();
+                            if !param_list.is_empty() {
+                                params.insert(format!("0x{selector}"), param_list);
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(layout) = artifact.storage_layout {
                 if !layout.storage.is_empty() {
                     layouts.insert(contract_name, layout);
@@ -315,5 +360,5 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<(HashMap<String,
             }
         }
     }
-    Ok((layouts, methods))
+    Ok((layouts, methods, params))
 }

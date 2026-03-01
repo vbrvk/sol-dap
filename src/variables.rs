@@ -3,22 +3,62 @@ use dap::types::Variable;
 use foundry_debugger::DebugNode;
 use revm_inspectors::tracing::types::CallTraceStep;
 
-pub fn stack_variables(step: &CallTraceStep) -> Vec<Variable> {
+/// Format a U256 value based on its Solidity type.
+fn format_typed_value(val: &alloy_primitives::U256, type_hint: &str) -> String {
+    if type_hint.starts_with("address") || type_hint.starts_with("contract") {
+        format!("0x{:040x}", val)
+    } else if type_hint == "bool" {
+        if val.is_zero() { "false".to_string() } else { "true".to_string() }
+    } else if type_hint.starts_with("bytes") && type_hint != "bytes" {
+        format!("0x{:x}", val)
+    } else if type_hint.starts_with("uint") || type_hint.starts_with("int") {
+        format!("{}", val)
+    } else {
+        format!("0x{:x}", val)
+    }
+}
+
+/// Format EVM stack as DAP Variables, using ABI param names when available.
+pub fn stack_variables(
+    step: &CallTraceStep,
+    function_params: Option<&[(String, String)]>,
+) -> Vec<Variable> {
     let Some(stack) = &step.stack else {
-        tracing::debug!("stack is None for pc={}", step.pc);
         return Vec::new();
     };
-    tracing::debug!("stack has {} items for pc={}", stack.len(), step.pc);
 
     stack
         .iter()
         .enumerate()
-        .map(|(i, val)| Variable {
-            name: format!("[{i}]"),
-            value: format!("0x{:x}", val),
-            type_field: Some("uint256".to_string()),
-            variables_reference: 0,
-            ..Default::default()
+        .map(|(i, val)| {
+            // Try to name this stack slot from function ABI params.
+            // In the EVM, function params are pushed to the stack in reverse order
+            // at the start of a function. The bottom of the stack (index 0, 1, ...)
+            // corresponds to the function parameters.
+            let (name, type_hint) = if let Some(params) = function_params {
+                if i < params.len() {
+                    (params[i].0.clone(), Some(params[i].1.clone()))
+                } else {
+                    (format!("[{i}]"), None)
+                }
+            } else {
+                (format!("[{i}]"), None)
+            };
+
+            // Format value based on type hint
+            let value = if let Some(ref t) = type_hint {
+                format_typed_value(val, t)
+            } else {
+                format!("0x{:x}", val)
+            };
+
+            Variable {
+                name,
+                value,
+                type_field: type_hint.or(Some("uint256".to_string())),
+                variables_reference: 0,
+                ..Default::default()
+            }
         })
         .collect()
 }
