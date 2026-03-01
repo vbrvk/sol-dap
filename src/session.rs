@@ -348,43 +348,50 @@ impl DebugSession {
     }
 
     pub fn continue_to_breakpoint(&mut self) -> StopReason {
-        // Skip past the current source line first, so we don't re-trigger
-        // the breakpoint we're already stopped at.
-        let start_loc = self.current_source_location().map(|l| (l.path.clone(), l.line));
+        // Record the breakpoint we're currently stopped at (if any).
+        // We need to skip ALL occurrences of this breakpoint until we hit a DIFFERENT one.
+        let skip_bp = self.current_source_location().and_then(|loc| {
+            self.source_breakpoints
+                .get(&loc.path)
+                .and_then(|lines| {
+                    if lines.iter().any(|&l| l == loc.line) {
+                        Some((loc.path.clone(), loc.line))
+                    } else {
+                        None
+                    }
+                })
+        });
 
-        let mut past_start = false;
         loop {
             if self.is_at_end() {
                 return StopReason::End;
             }
-
             self.step_opcode();
 
             let loc = match self.current_source_location() {
                 Some(l) => l,
                 None => continue,
             };
-
-            // Skip library code
             if Self::is_library_code(&loc) {
                 continue;
             }
 
-            // Check if we've moved past the starting line
-            if !past_start {
-                match &start_loc {
-                    Some((path, line)) if &loc.path == path && loc.line == *line => continue,
-                    _ => past_start = true,
+            // Check if this is a breakpoint
+            let is_bp = self.source_breakpoints
+                .get(&loc.path)
+                .is_some_and(|lines| lines.iter().any(|&l| l == loc.line));
+            if !is_bp {
+                continue;
+            }
+
+            // Skip if it's the same breakpoint we started on
+            if let Some((ref skip_path, skip_line)) = skip_bp {
+                if &loc.path == skip_path && loc.line == skip_line {
+                    continue;
                 }
             }
 
-            // Check breakpoints
-            if self.source_breakpoints
-                .get(&loc.path)
-                .is_some_and(|lines| lines.iter().any(|&l| l == loc.line))
-            {
-                return StopReason::Breakpoint;
-            }
+            return StopReason::Breakpoint;
         }
     }
 
