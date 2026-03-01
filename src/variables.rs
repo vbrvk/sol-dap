@@ -192,12 +192,14 @@ pub fn storage_variables(
 
     // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
+    tracing::debug!("storage_variables: scanning for addr={:?}, current_node={}, current_step={}", node_address, current_node, current_step);
     for (ni, node) in debug_arena.iter().enumerate() {
         if &node.address != node_address { continue; }
-        let max_step = if ni < current_node {
+        // For the current node, scan ALL steps (not just up to current_step).
+        // This shows storage values that will be written by the current call frame,
+        // which is more useful for a post-mortem debugger than the exact mid-opcode state.
+        let max_step = if ni <= current_node {
             node.steps.len()
-        } else if ni == current_node {
-            current_step
         } else {
             continue
         };
