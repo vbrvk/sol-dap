@@ -8,3 +8,5 @@ repository = "https://github.com/example/zed-sol-dap"
 
 [debug_adapters.sol-dap]
 schema_path = "debug_adapter_schemas/sol-dap.json"
+
+[debug_locators.foundry-test]
