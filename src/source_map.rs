@@ -40,6 +40,19 @@ pub fn step_to_source(
     })
 }
 
+/// Check if a step's source mapping indicates a function return (Jump::Out).
+pub fn is_jump_out(
+    step: &CallTraceStep,
+    contract_name: &str,
+    sources: &ContractSources,
+    is_create: bool,
+) -> bool {
+    use foundry_compilers::artifacts::sourcemap::Jump;
+    sources
+        .find_source_mapping(contract_name, step.pc as u32, is_create)
+        .is_some_and(|(elem, _)| elem.jump() == Jump::Out)
+}
+
 fn byte_offset_to_line_col(source: &str, offset: usize) -> (i64, i64) {
     let offset = offset.min(source.len());
     let bytes = source.as_bytes();

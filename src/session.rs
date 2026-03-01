@@ -246,87 +246,66 @@ impl DebugSession {
     }
 
     /// Step Out: return to the caller.
-    /// For external calls (CALL/STATICCALL): advance until we leave the current node.
-    /// For internal calls (JUMP within same contract): advance until the source location
-    /// changes to a different function (different source line range).
+    ///
+    /// Uses the solc source map's Jump::Out indicator to detect function returns.
+    /// For external calls, advances until we leave the current DebugNode.
+    /// For internal calls, advances until we find a JUMP with Jump::Out marker,
+    /// then steps once more to land on the caller's line.
     pub fn step_out(&mut self) {
         if self.debug_arena.is_empty() {
             return;
         }
         let start_node = self.current_node;
-        let start_step = self.current_step;
-        let start_address = self.debug_arena[start_node].address;
-        let start_loc = self.current_source_location();
 
-        // Determine if we're in an external call frame.
-        let is_external_call = start_node == 0 || {
-            start_node > 0 && self.debug_arena[start_node - 1].address != start_address
-        };
+        loop {
+            if self.is_at_end() {
+                break;
+            }
 
-        if is_external_call {
-            // External call: advance until we return to parent's node
-            loop {
-                if self.is_at_end() { break; }
-                self.step_opcode();
-                if self.current_node > start_node {
-                    if self.debug_arena[self.current_node].address != start_address {
-                        continue;
-                    }
+            // Check if the CURRENT step is a function return (Jump::Out)
+            // before advancing, so we can detect the return point.
+            let is_return = {
+                let node = &self.debug_arena[self.current_node];
+                let step = &node.steps[self.current_step];
+                let contract_name = self.identified_contracts
+                    .get(&node.address)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                source_map::is_jump_out(
+                    step, contract_name, &self.contracts_sources, node.kind.is_any_create(),
+                )
+            };
+
+            self.step_opcode();
+
+            if is_return {
+                // We just executed a return JUMP. Now skip unmapped/contract-def opcodes
+                // to land on the caller's meaningful source line.
+                loop {
+                    if self.is_at_end() { break; }
                     if let Some(loc) = self.current_source_location() {
                         if !self.is_contract_definition_line(&loc) {
                             break;
                         }
-                    } else {
-                        break;
                     }
+                    self.step_opcode();
                 }
-            }
-        } else {
-            // Internal call: track which source lines belong to this function,
-            // then advance until we land on a line outside that set.
-            let start_file = start_loc.as_ref().map(|l| l.path.clone());
-            let start_line = start_loc.as_ref().map(|l| l.line).unwrap_or(0);
-            let mut seen_lines: std::collections::HashSet<i64> = std::collections::HashSet::new();
-            seen_lines.insert(start_line);
-
-            // Scan backward to find all lines in the current function body
-            let node = &self.debug_arena[start_node];
-            for si in (0..start_step).rev().take(200) {
-                if let Some(loc) = source_map::step_to_source(
-                    &node.steps[si],
-                    self.current_contract_name().unwrap_or("?"),
-                    &self.contracts_sources,
-                    node.kind.is_any_create(),
-                    &self.launch_config.project_root,
-                ) {
-                    if start_file.as_ref() == Some(&loc.path) {
-                        if seen_lines.contains(&loc.line) || (loc.line - start_line).abs() <= 30 {
-                            seen_lines.insert(loc.line);
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
+                break;
             }
 
-            // Step forward until we leave the function
-            loop {
-                if self.is_at_end() { break; }
-                self.step_opcode();
-                if self.current_node != start_node {
-                    self.skip_to_node_return(start_node);
+            // If we crossed a node boundary (external call return), stop
+            if self.current_node > start_node {
+                // Skip contract-def lines in the parent
+                loop {
                     if self.is_at_end() { break; }
-                    continue;
-                }
-                if let Some(loc) = self.current_source_location() {
-                    if start_file.as_ref() == Some(&loc.path) && !seen_lines.contains(&loc.line) {
+                    if let Some(loc) = self.current_source_location() {
                         if !self.is_contract_definition_line(&loc) {
                             break;
                         }
                     }
+                    self.step_opcode();
                 }
+                break;
             }
         }
     }
