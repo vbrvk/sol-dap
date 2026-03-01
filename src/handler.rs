@@ -261,17 +261,41 @@ fn eval_mapping_or_storage(
         current_slot = U256::from_be_bytes(alloy_primitives::keccak256(&data).0);
     }
 
-    // Scan nodes matching the owning contract's address (not necessarily current address).
-    // This allows evaluating e.g. Vault's deposits[msg.sender] while stopped in VaultTest.
-    let target_address = owner_contract.as_ref().and_then(|name| {
-        session.identified_contracts.iter()
-            .find(|(_, v)| v.as_str() == name)
-            .map(|(addr, _)| *addr)
-    }).or_else(|| session.current_address().cloned());
+    // Find ALL contract addresses that have this storage variable.
+    // This handles inheritance: VaultWithCallback inherits Vault's deposits mapping.
+    // We scan all addresses that match, plus the current address as fallback.
+    let mut target_addresses: Vec<alloy_primitives::Address> = Vec::new();
+
+    // 1. Find the exact owner contract's address
+    if let Some(name) = &owner_contract {
+        for (addr, cname) in &session.identified_contracts {
+            if cname.as_str() == name {
+                target_addresses.push(*addr);
+            }
+        }
+    }
+
+    // 2. Also include the current address (handles inheritance)
+    if let Some(addr) = session.current_address() {
+        if !target_addresses.contains(addr) {
+            target_addresses.push(*addr);
+        }
+    }
+
+    // 3. Also include any contract that has this variable in its layout
+    for (cname, layout) in &session.storage_layouts {
+        if layout.storage.iter().any(|e| e.label == var_name) {
+            for (addr, identified_name) in &session.identified_contracts {
+                if identified_name.as_str() == cname && !target_addresses.contains(addr) {
+                    target_addresses.push(*addr);
+                }
+            }
+        }
+    }
 
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if target_address.as_ref() != Some(&node.address) {
+        if !target_addresses.contains(&node.address) {
             if ni > session.current_node { break; }
             continue;
         }
@@ -341,11 +365,14 @@ fn resolve_value(
             .unwrap_or_default();
     }
 
-    // msg.sender / caller
+    // msg.sender / caller — find the actual calling contract by scanning backward
+    // for the first node with a different address (the one that made the CALL)
     if expr == "msg.sender" || expr == "caller" {
-        if session.current_node > 0 {
-            let caller_addr = &session.debug_arena[session.current_node - 1].address;
-            return U256::from_be_slice(caller_addr.as_slice());
+        let current_addr = session.current_address().cloned();
+        for ni in (0..session.current_node).rev() {
+            if Some(&session.debug_arena[ni].address) != current_addr.as_ref() {
+                return U256::from_be_slice(session.debug_arena[ni].address.as_slice());
+            }
         }
         return U256::ZERO;
     }

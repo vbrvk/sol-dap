@@ -193,11 +193,14 @@ pub fn storage_variables(
     // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in debug_arena.iter().enumerate() {
-        if &node.address != node_address {
-            if ni > current_node { break; }
-            continue;
-        }
-        let max_step = if ni == current_node { current_step } else if ni < current_node { node.steps.len() } else { break };
+        if &node.address != node_address { continue; }
+        let max_step = if ni < current_node {
+            node.steps.len()
+        } else if ni == current_node {
+            current_step
+        } else {
+            continue
+        };
         for si in 0..max_step {
             let step = &node.steps[si];
             if step.op.get() == 0x55 {
@@ -311,15 +314,21 @@ pub fn context_variables(
         ..Default::default()
     });
 
+    // msg.sender: scan backward for the first node with a different address (the caller)
     if node_index > 0 {
-        let caller = &debug_arena[node_index - 1];
-        vars.push(Variable {
-            name: "msg.sender".to_string(),
-            value: format!("0x{:x}", caller.address),
-            type_field: Some("address".to_string()),
-            variables_reference: 0,
-            ..Default::default()
-        });
+        let current_addr = &node.address;
+        for ni in (0..node_index).rev() {
+            if &debug_arena[ni].address != current_addr {
+                vars.push(Variable {
+                    name: "msg.sender".to_string(),
+                    value: format!("0x{:x}", debug_arena[ni].address),
+                    type_field: Some("address".to_string()),
+                    variables_reference: 0,
+                    ..Default::default()
+                });
+                break;
+            }
+        }
     }
 
     vars
