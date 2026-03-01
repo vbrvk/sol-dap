@@ -37,6 +37,9 @@ pub struct StorageType {
     pub label: String,
     #[serde(rename = "numberOfBytes")]
     pub number_of_bytes: String,
+    /// "inplace", "mapping", "bytes", "dynamic_array"
+    #[serde(default)]
+    pub encoding: Option<String>,
 }
 
 /// Maps a 4-byte function selector to its signature.

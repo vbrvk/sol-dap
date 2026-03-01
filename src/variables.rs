@@ -179,57 +179,65 @@ pub fn gas_info_variables(step: &CallTraceStep) -> Vec<Variable> {
 }
 
 /// Build variables from storage layout + storage change tracking.
-/// Scans all trace steps up to the current position to build the current storage state,
-/// then presents named variables from the storage layout.
+/// Scans ALL trace steps (including CREATE nodes) to build storage state.
 pub fn storage_variables(
     debug_arena: &[DebugNode],
     current_node: usize,
     current_step: usize,
-    contract_name: &str,
+    node_address: &alloy_primitives::Address,
     layout: &crate::launch::StorageLayout,
 ) -> Vec<Variable> {
     use alloy_primitives::U256;
     use std::collections::HashMap;
 
-    // Build current storage state by replaying SLOAD/SSTORE ops.
-    // SSTORE opcode = 0x55, stack at SSTORE: [..., slot, value]
-    // We scan all steps up to the current position.
+    // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
-
     for (ni, node) in debug_arena.iter().enumerate() {
+        if &node.address != node_address {
+            if ni > current_node { break; }
+            continue;
+        }
         let max_step = if ni == current_node { current_step } else if ni < current_node { node.steps.len() } else { break };
         for si in 0..max_step {
             let step = &node.steps[si];
-            // SSTORE = 0x55
             if step.op.get() == 0x55 {
                 if let Some(stack) = &step.stack {
                     if stack.len() >= 2 {
-                        let slot = stack[stack.len() - 1];
-                        let value = stack[stack.len() - 2];
-                        storage.insert(slot, value);
+                        storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
                     }
                 }
             }
         }
     }
 
-    // Map storage slots to named variables using the layout.
     let mut vars: Vec<Variable> = Vec::new();
     for entry in &layout.storage {
         let slot: U256 = entry.slot.parse().unwrap_or_default();
-        let value = storage.get(&slot).copied().unwrap_or_default();
-        let type_label = layout.types.get(&entry.type_key)
-            .map(|t| t.label.as_str())
-            .unwrap_or("unknown");
+        let type_info = layout.types.get(&entry.type_key);
+        let type_label = type_info.map(|t| t.label.as_str()).unwrap_or("unknown");
+        let encoding = type_info.and_then(|t| t.encoding.as_deref()).unwrap_or("");
 
-        // Format value based on type
-        let formatted = if type_label.starts_with("uint") {
-            format!("{value}")  // decimal for uints
+        if encoding == "mapping" {
+            vars.push(Variable {
+                name: entry.label.clone(),
+                value: format!("({type_label})"),
+                type_field: Some(type_label.to_string()),
+                variables_reference: 0,
+                ..Default::default()
+            });
+            continue;
+        }
+
+        let value = storage.get(&slot).copied().unwrap_or_default();
+
+        let formatted = if encoding == "bytes" || type_label == "string" {
+            decode_short_string(&value)
+        } else if type_label.starts_with("uint") {
+            format!("{value}")
         } else if type_label.starts_with("int") {
-            // Signed int — interpret as i256
-            format!("{value}")  // TODO: proper signed display
+            format!("{value}")
         } else if type_label.starts_with("address") || type_label.starts_with("contract") {
-            format!("0x{:040x}", value)  // 20-byte address
+            format!("0x{:040x}", value)
         } else if type_label == "bool" {
             if value.is_zero() { "false".to_string() } else { "true".to_string() }
         } else {
@@ -245,6 +253,26 @@ pub fn storage_variables(
         });
     }
     vars
+}
+
+/// Decode a Solidity short string stored in a single storage slot.
+/// Short strings (<32 bytes): data in bytes[0..len], length*2 in last byte.
+pub fn decode_short_string(raw: &alloy_primitives::U256) -> String {
+    let bytes: [u8; 32] = raw.to_be_bytes();
+    let last_byte = bytes[31];
+    if last_byte & 1 == 0 {
+        let len = (last_byte / 2) as usize;
+        if len == 0 { return "\"\"".to_string(); }
+        let len = len.min(31);
+        match std::str::from_utf8(&bytes[..len]) {
+            Ok(s) => format!("\"{s}\""),
+            Err(_) => format!("0x{}", hex::encode(&bytes[..len])),
+        }
+    } else {
+        let total = alloy_primitives::U256::from_be_slice(&bytes);
+        let len = (total - alloy_primitives::U256::from(1)) / alloy_primitives::U256::from(2);
+        format!("(string, {len} bytes)")
+    }
 }
 
 /// Build context variables for a call frame.

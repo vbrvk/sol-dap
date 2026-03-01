@@ -132,32 +132,41 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
     use alloy_primitives::U256;
     use std::collections::HashMap;
 
-    // Find which slot(s) this variable maps to
-    let mut slot_info: Option<(U256, &str)> = None;
+    let mut slot_info: Option<(U256, &str, &str)> = None;
     for layout in session.storage_layouts.values() {
         for entry in &layout.storage {
             if entry.label == name {
                 let slot: U256 = entry.slot.parse().unwrap_or_default();
                 let type_label = layout.types.get(&entry.type_key)
-                    .map(|t| t.label.as_str())
-                    .unwrap_or("unknown");
-                slot_info = Some((slot, type_label));
+                    .map(|t| t.label.as_str()).unwrap_or("unknown");
+                let encoding = layout.types.get(&entry.type_key)
+                    .and_then(|t| t.encoding.as_deref()).unwrap_or("");
+                slot_info = Some((slot, type_label, encoding));
                 break;
             }
         }
     }
 
-    let Some((slot, type_label)) = slot_info else {
+    let Some((slot, type_label, encoding)) = slot_info else {
         return format!("variable '{}' not found in storage layout", name);
     };
 
-    // Replay SSTORE operations to find the current value
+    if encoding == "mapping" {
+        return format!("{name} ({type_label})");
+    }
+
+    // Replay SSTORE for current contract address
+    let current_address = session.current_address().cloned();
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
+        if current_address.as_ref() != Some(&node.address) {
+            if ni > session.current_node { break; }
+            continue;
+        }
         let max_step = if ni == session.current_node { session.current_step } else if ni < session.current_node { node.steps.len() } else { break };
         for si in 0..max_step {
             let s = &node.steps[si];
-            if s.op.get() == 0x55 { // SSTORE
+            if s.op.get() == 0x55 {
                 if let Some(stack) = &s.stack {
                     if stack.len() >= 2 {
                         storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
@@ -169,9 +178,10 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
 
     let value = storage.get(&slot).copied().unwrap_or_default();
 
-    // Format based on type
-    let formatted = if type_label.starts_with("uint") {
-        format!("{}", value)
+    let formatted = if encoding == "bytes" || type_label == "string" {
+        variables::decode_short_string(&value)
+    } else if type_label.starts_with("uint") {
+        format!("{value}")
     } else if type_label.starts_with("address") || type_label.starts_with("contract") {
         format!("0x{:040x}", value)
     } else if type_label == "bool" {
@@ -180,7 +190,7 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
         format!("0x{:x}", value)
     };
 
-    format!("{} ({}) = {}", name, type_label, formatted)
+    format!("{name} ({type_label}) = {formatted}")
 }
 
 /// Evaluate memory[offset] or memory[offset:length]
@@ -649,7 +659,7 @@ pub fn handle_request<R: Read, W: Write>(
                             &session.debug_arena,
                             session.current_node,
                             session.current_step,
-                            contract_name,
+                            &node.address,
                             layout,
                         )
                     } else {
