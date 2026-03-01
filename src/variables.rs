@@ -5,8 +5,10 @@ use revm_inspectors::tracing::types::CallTraceStep;
 
 pub fn stack_variables(step: &CallTraceStep) -> Vec<Variable> {
     let Some(stack) = &step.stack else {
+        tracing::debug!("stack is None for pc={}", step.pc);
         return Vec::new();
     };
+    tracing::debug!("stack has {} items for pc={}", stack.len(), step.pc);
 
     stack
         .iter()
