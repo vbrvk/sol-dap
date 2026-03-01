@@ -192,3 +192,99 @@ pub fn storage_variables(
     }
     vars
 }
+
+/// Build context variables for a call frame: address, caller, call kind, etc.
+/// The caller is the address of the PREVIOUS node in the debug arena (the one that made the CALL).
+pub fn context_variables(
+    node: &DebugNode,
+    node_index: usize,
+    debug_arena: &[DebugNode],
+    contract_name: &str,
+    fn_name: Option<&str>,
+    method_identifiers: &std::collections::HashMap<String, String>,
+) -> Vec<Variable> {
+    let mut vars = Vec::new();
+
+    // Contract address (this)
+    vars.push(Variable {
+        name: "address (this)".to_string(),
+        value: format!("0x{:x}", node.address),
+        type_field: Some("address".to_string()),
+        variables_reference: 0,
+        ..Default::default()
+    });
+
+    // Contract name
+    vars.push(Variable {
+        name: "contract".to_string(),
+        value: contract_name.to_string(),
+        type_field: Some("string".to_string()),
+        variables_reference: 0,
+        ..Default::default()
+    });
+
+    // Function
+    if let Some(name) = fn_name {
+        vars.push(Variable {
+            name: "function".to_string(),
+            value: name.to_string(),
+            type_field: Some("string".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+    }
+
+    // Call kind
+    vars.push(Variable {
+        name: "call kind".to_string(),
+        value: format!("{}", node.kind),
+        type_field: Some("string".to_string()),
+        variables_reference: 0,
+        ..Default::default()
+    });
+
+    // msg.sender — the address of the calling contract (previous node)
+    if node_index > 0 {
+        let caller = &debug_arena[node_index - 1];
+        vars.push(Variable {
+            name: "msg.sender".to_string(),
+            value: format!("0x{:x}", caller.address),
+            type_field: Some("address".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+    }
+
+    // msg.value — not available in the trace dump directly, show gas limit instead
+    vars.push(Variable {
+        name: "gas limit".to_string(),
+        value: format!("{}", node.gas_limit),
+        type_field: Some("uint64".to_string()),
+        variables_reference: 0,
+        ..Default::default()
+    });
+
+    // Calldata selector → function signature
+    if node.calldata.len() >= 4 {
+        let selector = format!("0x{}", hex::encode(&node.calldata[..4]));
+        let sig = method_identifiers.get(&selector).cloned().unwrap_or(selector.clone());
+        vars.push(Variable {
+            name: "msg.sig".to_string(),
+            value: sig,
+            type_field: Some("bytes4".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+    }
+
+    // msg.data length
+    vars.push(Variable {
+        name: "msg.data.length".to_string(),
+        value: format!("{}", node.calldata.len()),
+        type_field: Some("uint256".to_string()),
+        variables_reference: 0,
+        ..Default::default()
+    });
+
+    vars
+}
