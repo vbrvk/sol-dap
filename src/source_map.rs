@@ -17,7 +17,10 @@ pub fn step_to_source(
     is_create: bool,
     project_root: &std::path::Path,
 ) -> Option<SourceLocation> {
-    tracing::debug!("find_source_mapping: contract={contract_name}, pc={}, is_create={is_create}", step.pc);
+    tracing::debug!(
+        "find_source_mapping: contract={contract_name}, pc={}, is_create={is_create}",
+        step.pc
+    );
     let (source_element, source_data) =
         sources.find_source_mapping(contract_name, step.pc as u32, is_create)?;
 
@@ -27,7 +30,10 @@ pub fn step_to_source(
 
     let (line, column) = byte_offset_to_line_col(source_text, offset);
 
-    tracing::debug!("source_map hit: path={}, line={line}, col={column}", source_data.path.display());
+    tracing::debug!(
+        "source_map hit: path={}, line={line}, col={column}",
+        source_data.path.display()
+    );
     Some(SourceLocation {
         path: if source_data.path.is_absolute() {
             source_data.path.clone()

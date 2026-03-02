@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Pre-commit hook: runs fmt check, clippy, and tests.
+# Install: cp contrib/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+echo "pre-commit: checking formatting..."
+cargo fmt --check || { echo "FAILED: run 'cargo fmt' to fix"; exit 1; }
+
+echo "pre-commit: running clippy..."
+cargo clippy -- -W warnings || { echo "FAILED: fix clippy warnings"; exit 1; }
+
+echo "pre-commit: running tests..."
+cargo test || { echo "FAILED: fix failing tests"; exit 1; }
+
+echo "pre-commit: all checks passed"

@@ -41,10 +41,9 @@ fn main() {
                 if let Err(e) = server.respond(response) {
                     tracing::error!("failed to send response: {e}");
                 }
-                if is_initialize
-                    && let Err(e) = server.send_event(Event::Initialized) {
-                        tracing::error!("failed to emit initialized event: {e:?}");
-                    }
+                if is_initialize && let Err(e) = server.send_event(Event::Initialized) {
+                    tracing::error!("failed to emit initialized event: {e:?}");
+                }
                 if is_disconnect_restart {
                     tracing::info!("disconnect(restart=true), clearing session");
                     session = None;

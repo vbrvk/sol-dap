@@ -37,6 +37,17 @@ lint:
 fmt:
     cargo fmt
 
+# Run all CI checks (same as GitHub Actions and pre-commit hook)
+ci:
+    cargo fmt --check
+    cargo clippy -- -W warnings
+    cargo test
+
+# Install pre-commit hook
+install-hooks:
+    cp contrib/pre-commit .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+
 # Clean build artifacts
 clean:
     cargo clean

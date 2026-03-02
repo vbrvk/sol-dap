@@ -1,5 +1,5 @@
-use alloy_primitives::{hex, U256};
 use alloy_primitives::map::AddressHashMap;
+use alloy_primitives::{U256, hex};
 use dap::types::Variable;
 use foundry_debugger::DebugNode;
 use revm_inspectors::tracing::types::CallTraceStep;
@@ -12,7 +12,11 @@ fn format_typed_value(val: &alloy_primitives::U256, type_hint: &str) -> String {
     if type_hint.starts_with("address") || type_hint.starts_with("contract") {
         format!("0x{:040x}", val)
     } else if type_hint == "bool" {
-        if val.is_zero() { "false".to_string() } else { "true".to_string() }
+        if val.is_zero() {
+            "false".to_string()
+        } else {
+            "true".to_string()
+        }
     } else if type_hint.starts_with("bytes") && type_hint != "bytes" {
         format!("0x{:x}", val)
     } else if type_hint.starts_with("uint") || type_hint.starts_with("int") {
@@ -134,7 +138,6 @@ pub fn calldata_variables(
 
     vars
 }
-
 
 pub fn returndata_variables(step: &CallTraceStep) -> Vec<Variable> {
     let data = step.returndata.as_ref();
@@ -334,9 +337,8 @@ pub fn collect_events(
                     };
 
                     let val_opt: Option<U256> = if p.indexed {
-                        topics.get(topic_idx).copied().map(|v| {
+                        topics.get(topic_idx).copied().inspect(|_v| {
                             topic_idx += 1;
-                            v
                         })
                     } else {
                         let start = data_word_idx * 32;
@@ -386,22 +388,25 @@ pub fn storage_variables(
     // Replay ALL SSTORE ops for this contract address (including constructor).
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (node_idx, node) in debug_arena.iter().enumerate() {
-        if &node.address != node_address { continue; }
+        if &node.address != node_address {
+            continue;
+        }
         // For the current node, scan ALL steps (not just up to current_step).
         // This shows storage values that will be written by the current call frame,
         // which is more useful for a post-mortem debugger than the exact mid-opcode state.
         let max_step = if node_idx <= current_node {
             node.steps.len()
         } else {
-            continue
+            continue;
         };
         for step_idx in 0..max_step {
             let step = &node.steps[step_idx];
             if step.op.get() == 0x55
                 && let Some(stack) = &step.stack
-                    && stack.len() >= 2 {
-                        storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
-                    }
+                && stack.len() >= 2
+            {
+                storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
+            }
         }
     }
 
@@ -432,7 +437,11 @@ pub fn storage_variables(
         } else if type_label.starts_with("address") || type_label.starts_with("contract") {
             format!("0x{:040x}", value)
         } else if type_label == "bool" {
-            if value.is_zero() { "false".to_string() } else { "true".to_string() }
+            if value.is_zero() {
+                "false".to_string()
+            } else {
+                "true".to_string()
+            }
         } else {
             format!("0x{:x}", value)
         };
@@ -455,7 +464,9 @@ pub fn decode_short_string(raw: &alloy_primitives::U256) -> String {
     let last_byte = bytes[31];
     if last_byte & 1 == 0 {
         let len = (last_byte / 2) as usize;
-        if len == 0 { return "\"\"".to_string(); }
+        if len == 0 {
+            return "\"\"".to_string();
+        }
         let len = len.min(31);
         match std::str::from_utf8(&bytes[..len]) {
             Ok(s) => format!("\"{s}\""),
@@ -469,8 +480,8 @@ pub fn decode_short_string(raw: &alloy_primitives::U256) -> String {
 }
 
 const CONSOLE_LOG_ADDRESS_BYTES: [u8; 20] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f,
-    0x6c, 0x65, 0x2e, 0x6c, 0x6f, 0x67,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f, 0x6c, 0x65,
+    0x2e, 0x6c, 0x6f, 0x67,
 ];
 
 fn decode_console_log(calldata: &[u8]) -> String {
@@ -506,30 +517,31 @@ fn decode_console_log(calldata: &[u8]) -> String {
 
         let val = U256::from_be_slice(word);
 
-        if let Some(off) = u256_to_usize(val) {
-            if off % 32 == 0 && off + 32 <= args.len() {
-                let len_word_idx = off / 32;
-                if len_word_idx < words.len() && words[len_word_idx].len() == 32 {
-                    let len_u256 = U256::from_be_slice(words[len_word_idx]);
-                    if let Some(len) = u256_to_usize(len_u256) {
-                        if len <= 10_000 {
-                            let data_start = off + 32;
-                            let data_end = data_start.saturating_add(len);
-                            if data_start <= args.len() && data_end <= args.len() {
-                                let bytes = &args[data_start..data_end];
-                                if let Ok(s) = std::str::from_utf8(bytes) {
-                                    parts.push(s.to_string());
-                                    consumed[i] = true;
-                                    let data_words = (len + 31) / 32;
-                                    let total_words = 1 + data_words;
-                                    for j in len_word_idx..len_word_idx.saturating_add(total_words) {
-                                        if j < consumed.len() {
-                                            consumed[j] = true;
-                                        }
-                                    }
-                                    continue;
+        if let Some(off) = u256_to_usize(val)
+            && off % 32 == 0
+            && off + 32 <= args.len()
+        {
+            let len_word_idx = off / 32;
+            if len_word_idx < words.len() && words[len_word_idx].len() == 32 {
+                let len_u256 = U256::from_be_slice(words[len_word_idx]);
+                if let Some(len) = u256_to_usize(len_u256)
+                    && len <= 10_000
+                {
+                    let data_start = off + 32;
+                    let data_end = data_start.saturating_add(len);
+                    if data_start <= args.len() && data_end <= args.len() {
+                        let bytes = &args[data_start..data_end];
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            parts.push(s.to_string());
+                            consumed[i] = true;
+                            let data_words = len.div_ceil(32);
+                            let total_words = 1 + data_words;
+                            for j in len_word_idx..len_word_idx.saturating_add(total_words) {
+                                if j < consumed.len() {
+                                    consumed[j] = true;
                                 }
                             }
+                            continue;
                         }
                     }
                 }
@@ -537,7 +549,11 @@ fn decode_console_log(calldata: &[u8]) -> String {
         }
 
         if word[..31].iter().all(|&b| b == 0) && (word[31] == 0 || word[31] == 1) {
-            parts.push(if word[31] == 0 { "false".to_string() } else { "true".to_string() });
+            parts.push(if word[31] == 0 {
+                "false".to_string()
+            } else {
+                "true".to_string()
+            });
             consumed[i] = true;
             continue;
         }
@@ -685,18 +701,18 @@ pub fn context_variables(
     });
 
     // msg.sender: find the node just before the FIRST occurrence of this contract's address.
-    let first_entry = debug_arena.iter()
-        .position(|n| n.address == node.address);
+    let first_entry = debug_arena.iter().position(|n| n.address == node.address);
     if let Some(first) = first_entry
-        && first > 0 {
-            vars.push(Variable {
-                name: "msg.sender".to_string(),
-                value: format!("0x{:x}", debug_arena[first - 1].address),
-                type_field: Some("address".to_string()),
-                variables_reference: 0,
-                ..Default::default()
-            });
-        }
+        && first > 0
+    {
+        vars.push(Variable {
+            name: "msg.sender".to_string(),
+            value: format!("0x{:x}", debug_arena[first - 1].address),
+            type_field: Some("address".to_string()),
+            variables_reference: 0,
+            ..Default::default()
+        });
+    }
 
     vars
 }
@@ -734,8 +750,12 @@ pub fn local_variables(
     let mut func_end = current_idx;
     for (i, line) in lines.iter().enumerate().skip(func_start) {
         for ch in line.chars() {
-            if ch == '{' { brace_depth += 1; }
-            if ch == '}' { brace_depth -= 1; }
+            if ch == '{' {
+                brace_depth += 1;
+            }
+            if ch == '}' {
+                brace_depth -= 1;
+            }
         }
         if brace_depth <= 0 && i > func_start {
             func_end = i;
@@ -746,13 +766,17 @@ pub fn local_variables(
     // Parse local variable declarations within the function body
     let mut locals: Vec<Variable> = Vec::new();
     let solidity_types = [
-        "uint256", "uint128", "uint64", "uint32", "uint16", "uint8", "uint",
-        "int256", "int128", "int64", "int32", "int16", "int8", "int",
-        "address", "bool", "bytes32", "bytes", "string",
+        "uint256", "uint128", "uint64", "uint32", "uint16", "uint8", "uint", "int256", "int128",
+        "int64", "int32", "int16", "int8", "int", "address", "bool", "bytes32", "bytes", "string",
         "bytes1", "bytes2", "bytes4", "bytes8", "bytes16", "bytes20",
     ];
 
-    for (i, line) in lines.iter().enumerate().take(func_end.min(lines.len().saturating_sub(1)) + 1).skip(func_start + 1) {
+    for (i, line) in lines
+        .iter()
+        .enumerate()
+        .take(func_end.min(lines.len().saturating_sub(1)) + 1)
+        .skip(func_start + 1)
+    {
         let trimmed = line.trim();
         // Skip empty lines, comments, control flow
         if trimmed.is_empty()
@@ -779,7 +803,8 @@ pub fn local_variables(
                 let rest = rest.strip_prefix("storage ").unwrap_or(rest);
                 let rest = rest.strip_prefix("calldata ").unwrap_or(rest);
                 // Extract variable name (word before = or ;)
-                let var_name: String = rest.chars()
+                let var_name: String = rest
+                    .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
                 if !var_name.is_empty() {
@@ -804,11 +829,13 @@ pub fn local_variables(
         // Also handle contract/interface type declarations: 'SimpleToken token = ...'
         // These start with an uppercase letter
         if trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
-            let type_name: String = trimmed.chars()
+            let type_name: String = trimmed
+                .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
             let rest = trimmed[type_name.len()..].trim_start();
-            let var_name: String = rest.chars()
+            let var_name: String = rest
+                .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
             if !var_name.is_empty() && !var_name.starts_with(char::is_uppercase) {
@@ -834,7 +861,9 @@ pub fn local_variables(
     // This is a best-effort heuristic.
     if let Some(stack) = &step.stack {
         // Assign stack values top-down to the most recently declared locals
-        let declared_locals: Vec<usize> = locals.iter().enumerate()
+        let declared_locals: Vec<usize> = locals
+            .iter()
+            .enumerate()
             .filter(|(_, v)| v.value.starts_with("(declared"))
             .map(|(i, _)| i)
             .rev()
@@ -902,7 +931,10 @@ mod tests {
     fn format_unknown_type_hex() {
         let val = U256::from(255u64);
         let out = format_typed_value(&val, "tuple");
-        assert!(out.starts_with("0x"), "expected hex prefix for unknown type, got: {out}");
+        assert!(
+            out.starts_with("0x"),
+            "expected hex prefix for unknown type, got: {out}"
+        );
     }
 
     // ── decode_short_string ────────────────────────────────────────
@@ -936,7 +968,9 @@ mod tests {
         bytes[31] = 0x41; // odd → long string, length = (0x41-1)/2 = 32
         let raw = U256::from_be_bytes(bytes);
         let result = decode_short_string(&raw);
-        assert!(result.starts_with("(string,"), "expected long string marker, got: {result}");
+        assert!(
+            result.starts_with("(string,"),
+            "expected long string marker, got: {result}"
+        );
     }
-
-    }
+}

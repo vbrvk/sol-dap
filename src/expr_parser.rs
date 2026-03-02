@@ -213,10 +213,10 @@ fn parse_atom(input: &str) -> Result<Expr, String> {
     if let Some(hex) = input
         .strip_prefix("0x")
         .or_else(|| input.strip_prefix("0X"))
+        && !hex.is_empty()
+        && hex.chars().all(|c| c.is_ascii_hexdigit())
     {
-        if !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Ok(Expr::HexLiteral(input.to_string()));
-        }
+        return Ok(Expr::HexLiteral(input.to_string()));
     }
 
     // Decimal literal
@@ -370,7 +370,7 @@ fn is_valid_ident(s: &str) -> bool {
     }
     // Allow dotted keywords like msg.sender, msg.data
     if s.contains('.') {
-        return s.split('.').all(|part| is_valid_ident_part(part));
+        return s.split('.').all(is_valid_ident_part);
     }
     is_valid_ident_part(s)
 }

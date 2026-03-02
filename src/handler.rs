@@ -26,7 +26,9 @@ fn find_meaningful_step(
 
     // Scan forward for a step that maps to a DIFFERENT source line
     for (i, step) in node.steps.iter().enumerate().skip(1) {
-        if let Some(loc) = source_map::step_to_source(step, contract_name, sources, is_create, project_root) {
+        if let Some(loc) =
+            source_map::step_to_source(step, contract_name, sources, is_create, project_root)
+        {
             match &first_line {
                 Some((first_path, first_ln)) => {
                     if &loc.path != *first_path || loc.line != *first_ln {
@@ -49,7 +51,9 @@ fn emit_console_logs<R: Read, W: Write>(
     server: &mut dap::server::Server<R, W>,
     session: &mut Option<DebugSession>,
 ) {
-    let Some(session) = session.as_mut() else { return };
+    let Some(session) = session.as_mut() else {
+        return;
+    };
     let logs = crate::variables::collect_console_logs(
         &session.debug_arena,
         session.current_node,
@@ -97,14 +101,15 @@ fn emit_memory_event<R: Read, W: Write>(
     session: &Option<DebugSession>,
 ) {
     if let Some(session) = session.as_ref()
-        && let Some(step) = session.current_trace_step() {
-            let mem_size = step.memory.as_ref().map(|m| m.len()).unwrap_or(0);
-            let _ = server.send_event(Event::Memory(events::MemoryEventBody {
-                memory_reference: "evm-memory".to_string(),
-                offset: 0,
-                count: mem_size as i64,
-            }));
-        }
+        && let Some(step) = session.current_trace_step()
+    {
+        let mem_size = step.memory.as_ref().map(|m| m.len()).unwrap_or(0);
+        let _ = server.send_event(Event::Memory(events::MemoryEventBody {
+            memory_reference: "evm-memory".to_string(),
+            offset: 0,
+            count: mem_size as i64,
+        }));
+    }
 }
 
 pub fn handle_request<R: Read, W: Write>(
@@ -256,7 +261,12 @@ pub fn handle_request<R: Read, W: Write>(
                 let step_idx = if i == session.current_node {
                     session.current_step
                 } else {
-                    find_meaningful_step(node, contract_name, &session.contracts_sources, &session.launch_config.project_root)
+                    find_meaningful_step(
+                        node,
+                        contract_name,
+                        &session.contracts_sources,
+                        &session.launch_config.project_root,
+                    )
                 };
                 let Some(step) = node.steps.get(step_idx) else {
                     continue;
@@ -265,7 +275,8 @@ pub fn handle_request<R: Read, W: Write>(
                 // Resolve function name from calldata selector.
                 // The first 4 bytes of calldata are the function selector.
                 let fn_name = if node.calldata.len() >= 4 {
-                    let selector = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+                    let selector =
+                        format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
                     session.method_identifiers.get(&selector).cloned()
                 } else {
                     None
@@ -284,7 +295,10 @@ pub fn handle_request<R: Read, W: Write>(
 
                 tracing::debug!(
                     "source_map: contract={}, pc={}, is_create={}, node_kind={:?}",
-                    contract_name, step.pc, node.kind.is_any_create(), node.kind
+                    contract_name,
+                    step.pc,
+                    node.kind.is_any_create(),
+                    node.kind
                 );
                 if let Some(loc) = source_map::step_to_source(
                     step,
@@ -294,7 +308,8 @@ pub fn handle_request<R: Read, W: Write>(
                     &session.launch_config.project_root,
                 ) {
                     // Use path relative to project_root for display
-                    let display_path = loc.path
+                    let display_path = loc
+                        .path
                         .strip_prefix(&session.launch_config.project_root)
                         .unwrap_or(&loc.path);
                     frame.source = Some(types::Source {
@@ -304,7 +319,6 @@ pub fn handle_request<R: Read, W: Write>(
                     });
                     frame.line = loc.line;
                     frame.column = loc.column;
-
                 }
 
                 frames.push(frame);
@@ -442,7 +456,8 @@ pub fn handle_request<R: Read, W: Write>(
                 (3, Some(node), _) => {
                     // Decode calldata with ABI param names if available
                     let (fn_params, fn_sig) = if node.calldata.len() >= 4 {
-                        let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
+                        let sel =
+                            format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
                         (
                             session.function_params.get(&sel).map(|v| v.as_slice()),
                             session.method_identifiers.get(&sel).map(|s| s.as_str()),
@@ -479,8 +494,11 @@ pub fn handle_request<R: Read, W: Write>(
                     // Locals: parse source file for local variable declarations
                     if let Some(loc) = source_map::step_to_source(
                         step,
-                        session.identified_contracts.get(&session.debug_arena[frame_idx].address)
-                            .map(|s| s.as_str()).unwrap_or(""),
+                        session
+                            .identified_contracts
+                            .get(&session.debug_arena[frame_idx].address)
+                            .map(|s| s.as_str())
+                            .unwrap_or(""),
                         &session.contracts_sources,
                         session.debug_arena[frame_idx].kind.is_any_create(),
                         &session.launch_config.project_root,
@@ -586,10 +604,13 @@ pub fn handle_request<R: Read, W: Write>(
         Command::Restart(_) => {
             let (config, old_breakpoints) = match session.as_ref() {
                 Some(s) => (s.launch_config.clone(), s.source_breakpoints.clone()),
-                None => (match last_config.clone() {
-                    Some(c) => c,
-                    None => return req.clone().error("no launch config available for restart"),
-                }, Default::default()),
+                None => (
+                    match last_config.clone() {
+                        Some(c) => c,
+                        None => return req.clone().error("no launch config available for restart"),
+                    },
+                    Default::default(),
+                ),
             };
 
             match crate::launch::compile_and_debug(&config) {
@@ -648,8 +669,8 @@ pub fn handle_request<R: Read, W: Write>(
                 ))
             };
 
-            req.clone().success(ResponseBody::ReadMemory(
-                responses::ReadMemoryResponse {
+            req.clone()
+                .success(ResponseBody::ReadMemory(responses::ReadMemoryResponse {
                     address: format!("0x{:x}", offset),
                     unreadable_bytes: if end < offset + count {
                         Some((offset + count - end) as i64)
@@ -657,8 +678,7 @@ pub fn handle_request<R: Read, W: Write>(
                         None
                     },
                     data,
-                },
-            ))
+                }))
         }
         _ => req.clone().error("command not supported"),
     }

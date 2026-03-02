@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use alloy_primitives::map::AddressHashMap;
 use alloy_primitives::Address;
+use alloy_primitives::map::AddressHashMap;
 use foundry_debugger::DebugNode;
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
@@ -148,7 +148,9 @@ impl DebugSession {
     /// and stop when we return to the same (or higher) call depth.
     pub fn step_next(&mut self) {
         let start_node = self.current_node;
-        let start_loc = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
+        let start_loc = self
+            .current_source_location()
+            .map(|loc| (loc.path.clone(), loc.line));
 
         loop {
             if self.is_at_end() {
@@ -212,7 +214,9 @@ impl DebugSession {
     /// If the current line doesn't have a CALL, behaves like step_next.
     pub fn step_in(&mut self) {
         let start_node = self.current_node;
-        let start_loc = self.current_source_location().map(|loc| (loc.path.clone(), loc.line));
+        let start_loc = self
+            .current_source_location()
+            .map(|loc| (loc.path.clone(), loc.line));
 
         loop {
             if self.is_at_end() {
@@ -225,9 +229,10 @@ impl DebugSession {
                 // Skip contract-definition preamble
                 let loc = self.current_source_location();
                 if let Some(loc) = &loc
-                    && (self.is_contract_definition_line(loc) || Self::is_library_code(loc)) {
-                        continue;
-                    }
+                    && (self.is_contract_definition_line(loc) || Self::is_library_code(loc))
+                {
+                    continue;
+                }
                 break;
             }
 
@@ -271,12 +276,16 @@ impl DebugSession {
             let is_return = {
                 let node = &self.debug_arena[self.current_node];
                 let step = &node.steps[self.current_step];
-                let contract_name = self.identified_contracts
+                let contract_name = self
+                    .identified_contracts
                     .get(&node.address)
                     .map(|s| s.as_str())
                     .unwrap_or("");
                 source_map::is_jump_out(
-                    step, contract_name, &self.contracts_sources, node.kind.is_any_create(),
+                    step,
+                    contract_name,
+                    &self.contracts_sources,
+                    node.kind.is_any_create(),
                 )
             };
 
@@ -286,11 +295,15 @@ impl DebugSession {
                 // We just executed a return JUMP. Now skip unmapped/contract-def opcodes
                 // to land on the caller's meaningful source line.
                 loop {
-                    if self.is_at_end() { break; }
+                    if self.is_at_end() {
+                        break;
+                    }
                     if let Some(loc) = self.current_source_location()
-                        && !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
-                            break;
-                        }
+                        && !self.is_contract_definition_line(&loc)
+                        && !Self::is_library_code(&loc)
+                    {
+                        break;
+                    }
                     self.step_opcode();
                 }
                 break;
@@ -300,11 +313,15 @@ impl DebugSession {
             if self.current_node > start_node {
                 // Skip contract-def lines in the parent
                 loop {
-                    if self.is_at_end() { break; }
+                    if self.is_at_end() {
+                        break;
+                    }
                     if let Some(loc) = self.current_source_location()
-                        && !self.is_contract_definition_line(&loc) && !Self::is_library_code(&loc) {
-                            break;
-                        }
+                        && !self.is_contract_definition_line(&loc)
+                        && !Self::is_library_code(&loc)
+                    {
+                        break;
+                    }
                     self.step_opcode();
                 }
                 break;
@@ -315,15 +332,22 @@ impl DebugSession {
     /// Check if a source location points to a contract definition line.
     /// The solc source map maps the dispatcher preamble to the `contract X {` line.
     fn is_contract_definition_line(&self, loc: &SourceLocation) -> bool {
-        let Some(node) = self.current_debug_node() else { return false };
-        let Some(first_step) = node.steps.first() else { return false };
+        let Some(node) = self.current_debug_node() else {
+            return false;
+        };
+        let Some(first_step) = node.steps.first() else {
+            return false;
+        };
         let contract_name = match self.current_contract_name() {
             Some(n) => n,
             None => return false,
         };
         if let Some(first_loc) = source_map::step_to_source(
-            first_step, contract_name, &self.contracts_sources,
-            node.kind.is_any_create(), &self.launch_config.project_root,
+            first_step,
+            contract_name,
+            &self.contracts_sources,
+            node.kind.is_any_create(),
+            &self.launch_config.project_root,
         ) {
             first_loc.path == loc.path && first_loc.line == loc.line
         } else {
@@ -344,15 +368,13 @@ impl DebugSession {
         // Record the breakpoint we're currently stopped at (if any).
         // We need to skip ALL occurrences of this breakpoint until we hit a DIFFERENT one.
         let skip_bp = self.current_source_location().and_then(|loc| {
-            self.source_breakpoints
-                .get(&loc.path)
-                .and_then(|lines| {
-                    if lines.contains(&loc.line) {
-                        Some((loc.path.clone(), loc.line))
-                    } else {
-                        None
-                    }
-                })
+            self.source_breakpoints.get(&loc.path).and_then(|lines| {
+                if lines.contains(&loc.line) {
+                    Some((loc.path.clone(), loc.line))
+                } else {
+                    None
+                }
+            })
         });
 
         loop {
@@ -370,7 +392,8 @@ impl DebugSession {
             }
 
             // Check if this is a breakpoint
-            let is_bp = self.source_breakpoints
+            let is_bp = self
+                .source_breakpoints
                 .get(&loc.path)
                 .is_some_and(|lines| lines.contains(&loc.line));
             if !is_bp {
@@ -379,9 +402,11 @@ impl DebugSession {
 
             // Skip if it's the same breakpoint we started on
             if let Some((ref skip_path, skip_line)) = skip_bp
-                && &loc.path == skip_path && loc.line == skip_line {
-                    continue;
-                }
+                && &loc.path == skip_path
+                && loc.line == skip_line
+            {
+                continue;
+            }
 
             return StopReason::Breakpoint;
         }

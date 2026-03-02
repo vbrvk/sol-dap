@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use alloy_primitives::{hex, keccak256, map::AddressHashMap, Address};
+use alloy_primitives::{Address, hex, keccak256, map::AddressHashMap};
 use eyre::{Context, OptionExt};
 use foundry_config::Config as FoundryConfig;
 use foundry_debugger::DebugNode;
@@ -106,10 +106,16 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     let original_dir = std::env::current_dir().ok();
     std::env::set_current_dir(project_root).wrap_err("failed to chdir to project_root")?;
     let foundry_config = FoundryConfig::load_with_root(project_root).wrap_err_with(|| {
-        format!("failed to load foundry config from {}", project_root.display())
+        format!(
+            "failed to load foundry config from {}",
+            project_root.display()
+        )
     })?;
     let project = foundry_config.project().wrap_err_with(|| {
-        format!("failed to create foundry project for {}", project_root.display())
+        format!(
+            "failed to create foundry project for {}",
+            project_root.display()
+        )
     })?;
     // Restore original directory
     if let Some(dir) = original_dir {
@@ -128,10 +134,14 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     // Disable caching AND force recompile with explicit sources.
     let mut project = project;
     project.cached = false;
-    let sources_input = project.paths.read_input_files().wrap_err("failed to read source files")?;
+    let sources_input = project
+        .paths
+        .read_input_files()
+        .wrap_err("failed to read source files")?;
     tracing::info!("read {} source files", sources_input.len());
-    let compiler = foundry_compilers::project::ProjectCompiler::with_sources(&project, sources_input)
-        .wrap_err("failed to create compiler")?;
+    let compiler =
+        foundry_compilers::project::ProjectCompiler::with_sources(&project, sources_input)
+            .wrap_err("failed to create compiler")?;
     let output = compiler.compile().wrap_err("foundry compilation failed")?;
     let _sources = ContractSources::from_project_output(&output, project_root, None)
         .wrap_err("failed to build ContractSources from compilation output")?;
@@ -146,8 +156,11 @@ pub fn compile_and_debug(launch_config: &LaunchConfig) -> eyre::Result<DebuggerC
     // Load storage layouts from artifacts directory.
     let (storage_layouts, method_identifiers, event_signatures, function_params) =
         load_artifact_metadata(&project.paths.artifacts)?;
-    tracing::info!("loaded storage layouts for {} contracts, {} method selectors",
-        storage_layouts.len(), method_identifiers.len());
+    tracing::info!(
+        "loaded storage layouts for {} contracts, {} method selectors",
+        storage_layouts.len(),
+        method_identifiers.len()
+    );
 
     let identified_contracts = parse_identified_contracts(dump.contracts.identified_contracts)
         .wrap_err("failed to parse identified_contracts from forge dump")?;
@@ -206,9 +219,11 @@ fn split_contract_test(contract: Option<&str>, test: &str) -> (Option<String>, S
     }
 
     if let Some((c, t)) = test.split_once("::")
-        && !c.is_empty() && !t.is_empty() {
-            return (Some(c.to_string()), t.to_string());
-        }
+        && !c.is_empty()
+        && !t.is_empty()
+    {
+        return (Some(c.to_string()), t.to_string());
+    }
 
     (None, test.to_string())
 }
@@ -252,7 +267,11 @@ fn run_forge_debug_dump(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         tracing::trace!("poll: dump_exists={}", dump_path.exists());
-        if dump_path.exists() && std::fs::metadata(dump_path).map(|m| m.len() > 0).unwrap_or(false) {
+        if dump_path.exists()
+            && std::fs::metadata(dump_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        {
             // Give forge a moment to finish writing
             std::thread::sleep(std::time::Duration::from_millis(200));
             break;
@@ -327,14 +346,27 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<ArtifactMetadata
     }
     for entry in std::fs::read_dir(artifacts_dir)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() { continue; }
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
         for file in std::fs::read_dir(entry.path())? {
             let file = file?;
             let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-            let contract_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            if contract_name.is_empty() { continue; }
-            let data = match std::fs::read(&path) { Ok(d) => d, Err(_) => continue };
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let contract_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if contract_name.is_empty() {
+                continue;
+            }
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
             #[derive(Deserialize)]
             struct AbiInput {
                 name: String,
@@ -347,9 +379,17 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<ArtifactMetadata
             #[serde(tag = "type")]
             enum AbiItem {
                 #[serde(rename = "function")]
-                Function { name: String, #[serde(default)] inputs: Vec<AbiInput> },
+                Function {
+                    name: String,
+                    #[serde(default)]
+                    inputs: Vec<AbiInput>,
+                },
                 #[serde(rename = "event")]
-                Event { name: String, #[serde(default)] inputs: Vec<AbiInput> },
+                Event {
+                    name: String,
+                    #[serde(default)]
+                    inputs: Vec<AbiInput>,
+                },
                 #[serde(other)]
                 Other,
             }
@@ -362,23 +402,36 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<ArtifactMetadata
                 #[serde(default)]
                 abi: Vec<AbiItem>,
             }
-            let artifact: ArtifactPartial = match serde_json::from_slice(&data) { Ok(a) => a, Err(_) => continue };
+            let artifact: ArtifactPartial = match serde_json::from_slice(&data) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
 
             // Build selector -> param names from ABI + methodIdentifiers
             let mi = artifact.method_identifiers.as_ref();
             for item in &artifact.abi {
                 if let AbiItem::Function { name, inputs } = item {
                     // Build the signature to look up selector
-                    let sig = format!("{}({})", name, inputs.iter().map(|i| i.type_field.as_str()).collect::<Vec<_>>().join(","));
+                    let sig = format!(
+                        "{}({})",
+                        name,
+                        inputs
+                            .iter()
+                            .map(|i| i.type_field.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
                     if let Some(mi) = mi
-                        && let Some(selector) = mi.get(&sig) {
-                            let param_list: Vec<(String, String)> = inputs.iter()
-                                .map(|i| (i.name.clone(), i.type_field.clone()))
-                                .collect();
-                            if !param_list.is_empty() {
-                                params.insert(format!("0x{selector}"), param_list);
-                            }
+                        && let Some(selector) = mi.get(&sig)
+                    {
+                        let param_list: Vec<(String, String)> = inputs
+                            .iter()
+                            .map(|i| (i.name.clone(), i.type_field.clone()))
+                            .collect();
+                        if !param_list.is_empty() {
+                            params.insert(format!("0x{selector}"), param_list);
                         }
+                    }
                 }
             }
 
@@ -414,9 +467,10 @@ fn load_artifact_metadata(artifacts_dir: &Path) -> eyre::Result<ArtifactMetadata
             }
 
             if let Some(layout) = artifact.storage_layout
-                && !layout.storage.is_empty() {
-                    layouts.insert(contract_name, layout);
-                }
+                && !layout.storage.is_empty()
+            {
+                layouts.insert(contract_name, layout);
+            }
             if let Some(mi) = artifact.method_identifiers {
                 for (sig, selector) in mi {
                     methods.insert(format!("0x{selector}"), sig);

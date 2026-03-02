@@ -614,7 +614,7 @@ fn test_storage_eval_cross_contract() {
 
 #[test]
 fn test_mapping_keccak256_slot_computation() {
-    use alloy_primitives::{keccak256, U256};
+    use alloy_primitives::{U256, keccak256};
 
     // Verify our keccak256(abi.encode(key, slot)) matches what Solidity produces.
     // For mapping(address => uint256) at slot 2, key = 0x7fa9...

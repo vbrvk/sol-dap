@@ -36,13 +36,13 @@ fn eval_ast(
         }
         Expr::StackIndex(idx) => eval_stack_index(*idx, step),
         Expr::LogAccess(idx) => eval_log_index(*idx, session),
-        Expr::EventAccess { index, field_index } => eval_event_access(*index, *field_index, session),
+        Expr::EventAccess { index, field_index } => {
+            eval_event_access(*index, *field_index, session)
+        }
         Expr::EventField { index, field } => eval_event_field(*index, field, session),
         Expr::MemoryAccess { offset, length } => eval_memory_access(*offset, *length, step),
         Expr::Ident(name) => eval_ident(name, session),
-        Expr::MappingLookup { name, keys } => {
-            eval_mapping_lookup(name, keys, step, session)
-        }
+        Expr::MappingLookup { name, keys } => eval_mapping_lookup(name, keys, step, session),
         Expr::BinaryOp { lhs, op, rhs } => {
             let lhs_val = eval_to_u256(lhs, step, session);
             let rhs_val = eval_to_u256(rhs, step, session);
@@ -65,24 +65,30 @@ fn eval_to_u256(
 
     match ast {
         Expr::HexLiteral(s) => {
-            let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
             U256::from_str_radix(hex_str, 16).unwrap_or_default()
         }
-        Expr::DecLiteral(s) => {
-            U256::from_str_radix(s, 10).unwrap_or_default()
-        }
+        Expr::DecLiteral(s) => U256::from_str_radix(s, 10).unwrap_or_default(),
         Expr::StackIndex(idx) => {
             let idx = *idx as usize;
-            step.stack.as_ref()
-                .and_then(|s| if idx < s.len() { Some(s[s.len() - 1 - idx]) } else { None })
+            step.stack
+                .as_ref()
+                .and_then(|s| {
+                    if idx < s.len() {
+                        Some(s[s.len() - 1 - idx])
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default()
         }
         Expr::LogAccess(_) => U256::ZERO,
         Expr::Keyword(kw) => resolve_keyword_to_u256(kw, step, session),
         Expr::Ident(name) => resolve_ident_to_u256(name, step, session),
-        Expr::MappingLookup { name, keys } => {
-            resolve_mapping_to_u256(name, keys, step, session)
-        }
+        Expr::MappingLookup { name, keys } => resolve_mapping_to_u256(name, keys, step, session),
         Expr::BinaryOp { lhs, op, rhs } => {
             let l = eval_to_u256(lhs, step, session);
             let r = eval_to_u256(rhs, step, session);
@@ -92,7 +98,8 @@ fn eval_to_u256(
         Expr::MemoryAccess { offset, .. } => {
             // Read 32 bytes from memory at offset as a U256
             let off = *offset as usize;
-            step.memory.as_ref()
+            step.memory
+                .as_ref()
                 .and_then(|m| {
                     let mem = m.as_ref();
                     if off + 32 <= mem.len() {
@@ -117,11 +124,15 @@ fn apply_binop(
         BinOp::Sub => lhs.wrapping_sub(rhs),
         BinOp::Mul => lhs.wrapping_mul(rhs),
         BinOp::Div => {
-            if rhs.is_zero() { return Err("division by zero".to_string()); }
+            if rhs.is_zero() {
+                return Err("division by zero".to_string());
+            }
             lhs.wrapping_div(rhs)
         }
         BinOp::Mod => {
-            if rhs.is_zero() { return Err("modulo by zero".to_string()); }
+            if rhs.is_zero() {
+                return Err("modulo by zero".to_string());
+            }
             lhs.wrapping_rem(rhs)
         }
         BinOp::BitAnd => lhs & rhs,
@@ -234,7 +245,11 @@ fn eval_keyword(
 }
 
 fn eval_log_index(idx: u64, session: &DebugSession) -> String {
-    let logs = variables::collect_console_logs(&session.debug_arena, session.current_node, session.current_step);
+    let logs = variables::collect_console_logs(
+        &session.debug_arena,
+        session.current_node,
+        session.current_step,
+    );
     let i: usize = match idx.try_into() {
         Ok(v) => v,
         Err(_) => return "log index too large".to_string(),
@@ -266,7 +281,9 @@ fn resolve_keyword_to_u256(
                 .debug_arena
                 .iter()
                 .position(|n| Some(&n.address) == current_addr.as_ref());
-            if let Some(first) = first_entry && first > 0 {
+            if let Some(first) = first_entry
+                && first > 0
+            {
                 U256::from_be_slice(session.debug_arena[first - 1].address.as_slice())
             } else {
                 U256::ZERO
@@ -278,17 +295,17 @@ fn resolve_keyword_to_u256(
 
 fn eval_hex_literal(s: &str) -> String {
     use alloy_primitives::U256;
-    let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let hex_str = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     match U256::from_str_radix(hex_str, 16) {
         Ok(val) => format_u256_result(val),
         Err(_) => format!("invalid hex literal: {s}"),
     }
 }
 
-fn eval_stack_index(
-    idx: u64,
-    step: &revm_inspectors::tracing::types::CallTraceStep,
-) -> String {
+fn eval_stack_index(idx: u64, step: &revm_inspectors::tracing::types::CallTraceStep) -> String {
     let idx = idx as usize;
     if let Some(stack) = &step.stack {
         if idx < stack.len() {
@@ -398,7 +415,8 @@ fn eval_memory_access(
     if off >= memory.len() {
         return format!(
             "offset {} out of bounds (memory is {} bytes)",
-            off, memory.len()
+            off,
+            memory.len()
         );
     }
     let end = (off + len).min(memory.len());
@@ -423,7 +441,9 @@ fn resolve_ident_to_u256(
     use alloy_primitives::U256;
 
     // Calldata param
-    if let Some(node) = session.current_debug_node() && node.calldata.len() >= 4 {
+    if let Some(node) = session.current_debug_node()
+        && node.calldata.len() >= 4
+    {
         let sel = format!("0x{}", alloy_primitives::hex::encode(&node.calldata[..4]));
         if let Some(params) = session.function_params.get(&sel) {
             for (i, (pname, _ptype)) in params.iter().enumerate() {
@@ -438,10 +458,10 @@ fn resolve_ident_to_u256(
     }
 
     // Storage variable
-    if is_storage_variable(name, session) {
-        if let Some(val) = resolve_storage_value(name, session) {
-            return val;
-        }
+    if is_storage_variable(name, session)
+        && let Some(val) = resolve_storage_value(name, session)
+    {
+        return val;
     }
 
     U256::ZERO
@@ -515,7 +535,9 @@ fn eval_mapping_lookup(
             }
         }
     }
-    if let Some(addr) = session.current_address() && !target_addresses.contains(addr) {
+    if let Some(addr) = session.current_address()
+        && !target_addresses.contains(addr)
+    {
         target_addresses.push(*addr);
     }
     for (cname, layout) in &session.storage_layouts {
@@ -531,11 +553,20 @@ fn eval_mapping_lookup(
     // Replay SSTORE
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if !target_addresses.contains(&node.address) { continue; }
-        let max_step = if ni <= session.current_node { node.steps.len() } else { continue };
+        if !target_addresses.contains(&node.address) {
+            continue;
+        }
+        let max_step = if ni <= session.current_node {
+            node.steps.len()
+        } else {
+            continue;
+        };
         for si in 0..max_step {
             let s = &node.steps[si];
-            if s.op.get() == 0x55 && let Some(stack) = &s.stack && stack.len() >= 2 {
+            if s.op.get() == 0x55
+                && let Some(stack) = &s.stack
+                && stack.len() >= 2
+            {
                 storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
             }
         }
@@ -581,7 +612,9 @@ fn resolve_mapping_to_u256(
         }
     }
 
-    let Some(base_slot) = mapping_slot else { return U256::ZERO; };
+    let Some(base_slot) = mapping_slot else {
+        return U256::ZERO;
+    };
 
     let resolved_keys: Vec<U256> = keys
         .iter()
@@ -599,10 +632,14 @@ fn resolve_mapping_to_u256(
     let mut target_addresses: Vec<alloy_primitives::Address> = Vec::new();
     if let Some(ref owner) = owner_contract {
         for (addr, cname) in &session.identified_contracts {
-            if cname.as_str() == owner { target_addresses.push(*addr); }
+            if cname.as_str() == owner {
+                target_addresses.push(*addr);
+            }
         }
     }
-    if let Some(addr) = session.current_address() && !target_addresses.contains(addr) {
+    if let Some(addr) = session.current_address()
+        && !target_addresses.contains(addr)
+    {
         target_addresses.push(*addr);
     }
     for (cname, layout) in &session.storage_layouts {
@@ -617,11 +654,20 @@ fn resolve_mapping_to_u256(
 
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if !target_addresses.contains(&node.address) { continue; }
-        let max_step = if ni <= session.current_node { node.steps.len() } else { continue };
+        if !target_addresses.contains(&node.address) {
+            continue;
+        }
+        let max_step = if ni <= session.current_node {
+            node.steps.len()
+        } else {
+            continue;
+        };
         for si in 0..max_step {
             let s = &node.steps[si];
-            if s.op.get() == 0x55 && let Some(stack) = &s.stack && stack.len() >= 2 {
+            if s.op.get() == 0x55
+                && let Some(stack) = &s.stack
+                && stack.len() >= 2
+            {
                 storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
             }
         }
@@ -650,10 +696,16 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
         for entry in &layout.storage {
             if entry.label == name {
                 let slot: U256 = entry.slot.parse().unwrap_or_default();
-                let type_label = layout.types.get(&entry.type_key)
-                    .map(|t| t.label.as_str()).unwrap_or("unknown");
-                let encoding = layout.types.get(&entry.type_key)
-                    .and_then(|t| t.encoding.as_deref()).unwrap_or("");
+                let type_label = layout
+                    .types
+                    .get(&entry.type_key)
+                    .map(|t| t.label.as_str())
+                    .unwrap_or("unknown");
+                let encoding = layout
+                    .types
+                    .get(&entry.type_key)
+                    .and_then(|t| t.encoding.as_deref())
+                    .unwrap_or("");
                 slot_info = Some((slot, type_label, encoding, contract_name.as_str()));
                 break;
             }
@@ -668,18 +720,29 @@ fn eval_storage_variable(name: &str, session: &DebugSession) -> String {
         return format!("{name} ({type_label})");
     }
 
-    let target_address = session.identified_contracts.iter()
+    let target_address = session
+        .identified_contracts
+        .iter()
         .find(|(_, v)| v.as_str() == owner_name)
         .map(|(addr, _)| *addr)
         .or_else(|| session.current_address().cloned());
 
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if target_address.as_ref() != Some(&node.address) { continue; }
-        let max_step = if ni <= session.current_node { node.steps.len() } else { continue };
+        if target_address.as_ref() != Some(&node.address) {
+            continue;
+        }
+        let max_step = if ni <= session.current_node {
+            node.steps.len()
+        } else {
+            continue;
+        };
         for si in 0..max_step {
             let s = &node.steps[si];
-            if s.op.get() == 0x55 && let Some(stack) = &s.stack && stack.len() >= 2 {
+            if s.op.get() == 0x55
+                && let Some(stack) = &s.stack
+                && stack.len() >= 2
+            {
                 storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
             }
         }
@@ -699,8 +762,11 @@ fn resolve_storage_value(name: &str, session: &DebugSession) -> Option<alloy_pri
         for entry in &layout.storage {
             if entry.label == name {
                 let slot: U256 = entry.slot.parse().unwrap_or_default();
-                let encoding = layout.types.get(&entry.type_key)
-                    .and_then(|t| t.encoding.as_deref()).unwrap_or("");
+                let encoding = layout
+                    .types
+                    .get(&entry.type_key)
+                    .and_then(|t| t.encoding.as_deref())
+                    .unwrap_or("");
                 slot_info = Some((slot, encoding, contract_name.as_str()));
                 break;
             }
@@ -708,20 +774,33 @@ fn resolve_storage_value(name: &str, session: &DebugSession) -> Option<alloy_pri
     }
 
     let (slot, encoding, owner_name) = slot_info?;
-    if encoding == "mapping" { return None; }
+    if encoding == "mapping" {
+        return None;
+    }
 
-    let target_address = session.identified_contracts.iter()
+    let target_address = session
+        .identified_contracts
+        .iter()
         .find(|(_, v)| v.as_str() == owner_name)
         .map(|(addr, _)| *addr)
         .or_else(|| session.current_address().cloned());
 
     let mut storage: HashMap<U256, U256> = HashMap::new();
     for (ni, node) in session.debug_arena.iter().enumerate() {
-        if target_address.as_ref() != Some(&node.address) { continue; }
-        let max_step = if ni <= session.current_node { node.steps.len() } else { continue };
+        if target_address.as_ref() != Some(&node.address) {
+            continue;
+        }
+        let max_step = if ni <= session.current_node {
+            node.steps.len()
+        } else {
+            continue;
+        };
         for si in 0..max_step {
             let s = &node.steps[si];
-            if s.op.get() == 0x55 && let Some(stack) = &s.stack && stack.len() >= 2 {
+            if s.op.get() == 0x55
+                && let Some(stack) = &s.stack
+                && stack.len() >= 2
+            {
                 storage.insert(stack[stack.len() - 1], stack[stack.len() - 2]);
             }
         }
@@ -753,7 +832,11 @@ fn format_value_by_type(value: alloy_primitives::U256, type_label: &str) -> Stri
     } else if type_label.starts_with("address") || type_label.starts_with("contract") {
         format!("0x{:040x}", value)
     } else if type_label == "bool" {
-        if value.is_zero() { "false".to_string() } else { "true".to_string() }
+        if value.is_zero() {
+            "false".to_string()
+        } else {
+            "true".to_string()
+        }
     } else {
         format!("0x{:x}", value)
     }
@@ -801,11 +884,26 @@ mod tests {
     #[test]
     fn apply_binop_basic() {
         use alloy_primitives::U256;
-        assert_eq!(apply_binop(U256::from(1), BinOp::Add, U256::from(1)).unwrap(), U256::from(2));
-        assert_eq!(apply_binop(U256::from(255), BinOp::Sub, U256::from(32)).unwrap(), U256::from(223));
-        assert_eq!(apply_binop(U256::from(0xff), BinOp::BitAnd, U256::from(0x0f)).unwrap(), U256::from(0x0f));
-        assert_eq!(apply_binop(U256::from(1), BinOp::Shl, U256::from(8)).unwrap(), U256::from(256));
-        assert_eq!(apply_binop(U256::from(256), BinOp::Shr, U256::from(4)).unwrap(), U256::from(16));
+        assert_eq!(
+            apply_binop(U256::from(1), BinOp::Add, U256::from(1)).unwrap(),
+            U256::from(2)
+        );
+        assert_eq!(
+            apply_binop(U256::from(255), BinOp::Sub, U256::from(32)).unwrap(),
+            U256::from(223)
+        );
+        assert_eq!(
+            apply_binop(U256::from(0xff), BinOp::BitAnd, U256::from(0x0f)).unwrap(),
+            U256::from(0x0f)
+        );
+        assert_eq!(
+            apply_binop(U256::from(1), BinOp::Shl, U256::from(8)).unwrap(),
+            U256::from(256)
+        );
+        assert_eq!(
+            apply_binop(U256::from(256), BinOp::Shr, U256::from(4)).unwrap(),
+            U256::from(16)
+        );
     }
 
     #[test]
